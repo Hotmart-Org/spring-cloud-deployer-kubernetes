@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<artifactId>spring-cloud-deployer-kubernetes</artifactId>
-	<version>1.2.3.HOTMART-1</version>
+	<version>1.2.3.HOTMART-2</version>
 	<groupId>org.springframework.cloud</groupId>
 	<packaging>jar</packaging>
 
