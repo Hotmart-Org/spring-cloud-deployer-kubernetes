@@ -73,6 +73,12 @@ public class KubernetesAutoConfiguration {
 					environment.getProperty(Config.KUBERNETES_AUTH_BASIC_PASSWORD_SYSTEM_PROPERTY));
 		}
 		
+		
+		if(environment.getProperty(Config.KUBERNETES_OAUTH_TOKEN_SYSTEM_PROPERTY) != null) {
+			System.setProperty(Config.KUBERNETES_OAUTH_TOKEN_SYSTEM_PROPERTY, 
+					environment.getProperty(Config.KUBERNETES_OAUTH_TOKEN_SYSTEM_PROPERTY));
+		}
+		
 		return new DefaultKubernetesClient().inNamespace(properties.getNamespace());
 	}
 
