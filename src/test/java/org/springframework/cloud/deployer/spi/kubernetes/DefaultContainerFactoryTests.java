@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,7 @@ import org.springframework.test.context.junit4.SpringRunner;
  *
  * @author Will Kennedy
  * @author Donovan Muller
+ * @author Chris Schaefer
  */
 @RunWith(SpringRunner.class)
 @SpringBootTest(classes = { KubernetesAutoConfiguration.class })
@@ -69,7 +71,7 @@ public class DefaultContainerFactoryTests {
 				resource, props);
 
 		Container container = defaultContainerFactory.create("app-test",
-				appDeploymentRequest, null, null, false);
+				appDeploymentRequest, null, false);
 		assertNotNull(container);
 		assertEquals(3, container.getEnv().size());
 		EnvVar envVar1 = container.getEnv().get(0);
@@ -95,7 +97,7 @@ public class DefaultContainerFactoryTests {
 				resource, props);
 
 		Container container = defaultContainerFactory.create("app-test",
-				appDeploymentRequest, null, null, false);
+				appDeploymentRequest, null, false);
 		assertNotNull(container);
 		assertThat(container.getCommand()).containsExactly("echo", "arg1", "arg2");
 	}
@@ -115,7 +117,7 @@ public class DefaultContainerFactoryTests {
 				resource, props);
 
 		Container container = defaultContainerFactory.create("app-test",
-				appDeploymentRequest, null, null, false);
+				appDeploymentRequest, null, false);
 		assertNotNull(container);
 		List<ContainerPort> containerPorts = container.getPorts();
 		assertNotNull(containerPorts);
@@ -140,7 +142,7 @@ public class DefaultContainerFactoryTests {
 				resource, props);
 
 		//Attempting to create with an invalid integer set for a port should cause an exception to bubble up.
-		defaultContainerFactory.create("app-test", appDeploymentRequest, null, null, false);
+		defaultContainerFactory.create("app-test", appDeploymentRequest, null, false);
 	}
 
 	@Test
@@ -158,7 +160,7 @@ public class DefaultContainerFactoryTests {
 				resource, props);
 
 		Container container = defaultContainerFactory.create("app-test",
-				appDeploymentRequest, null, null, true);
+				appDeploymentRequest, null, true);
 		assertNotNull(container);
 		List<ContainerPort> containerPorts = container.getPorts();
 		assertNotNull(containerPorts);
@@ -187,7 +189,7 @@ public class DefaultContainerFactoryTests {
 		AppDeploymentRequest appDeploymentRequestShell = new AppDeploymentRequest(definition,
 				resource, props);
 		Container containerShell = defaultContainerFactory.create("app-test",
-				appDeploymentRequestShell, null, null, false);
+				appDeploymentRequestShell, null, false);
 		assertNotNull(containerShell);
 		assertTrue(containerShell.getEnv().get(0).getName().equals("FOO_BAR_BAZ"));
 		assertTrue(containerShell.getArgs().size() == 0);
@@ -196,20 +198,22 @@ public class DefaultContainerFactoryTests {
 		AppDeploymentRequest appDeploymentRequestExec = new AppDeploymentRequest(definition,
 				resource, props);
 		Container containerExec = defaultContainerFactory.create("app-test",
-				appDeploymentRequestExec, null, null, false);
+				appDeploymentRequestExec, null, false);
 		assertNotNull(containerExec);
 		assertTrue(containerExec.getEnv().size() == 1);
 		assertTrue(containerExec.getArgs().get(0).equals("--foo.bar.baz=test"));
 
 		props.put("spring.cloud.deployer.kubernetes.entryPointStyle", "boot");
 		AppDeploymentRequest appDeploymentRequestBoot = new AppDeploymentRequest(definition,
-				resource, props);
+				resource, props, Arrays.asList("--arg1=val1", "--arg2=val2"));
 		Container containerBoot = defaultContainerFactory.create("app-test",
-				appDeploymentRequestBoot, null, null, false);
+				appDeploymentRequestBoot, null, false);
 		assertNotNull(containerBoot);
 		assertTrue(containerBoot.getEnv().get(0).getName().equals("SPRING_APPLICATION_JSON"));
 		assertTrue(containerBoot.getEnv().get(0).getValue().equals(new ObjectMapper().writeValueAsString(appProps)));
-		assertTrue(containerBoot.getArgs().size() == 0);
+		assertTrue(containerBoot.getArgs().size() == 2);
+		assertTrue(containerBoot.getArgs().get(0).equals("--arg1=val1"));
+		assertTrue(containerBoot.getArgs().get(1).equals("--arg2=val2"));
 	}
 
 	@Test
@@ -229,7 +233,7 @@ public class DefaultContainerFactoryTests {
 					+ "]");
 		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, resource, props);
 
-		Container container = defaultContainerFactory.create("app-test", appDeploymentRequest, null, null, false);
+		Container container = defaultContainerFactory.create("app-test", appDeploymentRequest, null, false);
 
 		assertThat(container.getVolumeMounts()).containsOnly(
 				new VolumeMount("/test/hostPath", "testhostpath", null, null),
@@ -252,12 +256,162 @@ public class DefaultContainerFactoryTests {
 						+ "{name: 'testpvc', mountPath: '/test/pvc/overridden'}, "
 						+ "{name: 'testnfs', mountPath: '/test/nfs/overridden', readOnly: 'true'}"
 					+ "]");
-		container = defaultContainerFactory.create("app-test", appDeploymentRequest, null, null, false);
+		container = defaultContainerFactory.create("app-test", appDeploymentRequest, null, false);
 
 		assertThat(container.getVolumeMounts()).containsOnly(
 				new VolumeMount("/test/hostPath", "testhostpath", false, null),
 				new VolumeMount("/test/pvc/overridden", "testpvc", null, null),
 				new VolumeMount("/test/nfs/overridden", "testnfs", true, null));
+	}
+
+	@Test
+	public void createCustomLivenessPortFromProperties() {
+		int defaultPort = 8080;
+		int livenessPort = 8090;
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.setLivenessProbePort(livenessPort);
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		Resource resource = getResource();
+		Map<String, String> props = new HashMap<>();
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
+				resource, props);
+
+		Container container = defaultContainerFactory.create("app-test",
+				appDeploymentRequest, defaultPort, true);
+		assertNotNull(container);
+
+		List<ContainerPort> containerPorts = container.getPorts();
+		assertNotNull(containerPorts);
+
+		assertTrue("Only two container ports should be set", containerPorts.size() == 2);
+		assertTrue(8080 == containerPorts.get(0).getContainerPort());
+		assertTrue(8080 == containerPorts.get(0).getHostPort());
+		assertTrue(8090 == containerPorts.get(1).getContainerPort());
+		assertTrue(8090 == containerPorts.get(1).getHostPort());
+		assertTrue(8090 == container.getLivenessProbe().getHttpGet().getPort().getIntVal());
+	}
+
+	@Test
+	public void createCustomLivenessPortFromAppRequest() {
+		int defaultPort = 8080;
+		int livenessPort = 8090;
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		Resource resource = getResource();
+		Map<String, String> props = new HashMap<>();
+		props.put("spring.cloud.deployer.kubernetes.livenessProbePort", Integer.toString(livenessPort));
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
+				resource, props);
+
+		Container container = defaultContainerFactory.create("app-test",
+				appDeploymentRequest, defaultPort, true);
+		assertNotNull(container);
+
+		List<ContainerPort> containerPorts = container.getPorts();
+		assertNotNull(containerPorts);
+
+		assertTrue("Only two container ports should be set", containerPorts.size() == 2);
+		assertTrue(8080 == containerPorts.get(0).getContainerPort());
+		assertTrue(8080 == containerPorts.get(0).getHostPort());
+		assertTrue(8090 == containerPorts.get(1).getContainerPort());
+		assertTrue(8090 == containerPorts.get(1).getHostPort());
+		assertTrue(8090 == container.getLivenessProbe().getHttpGet().getPort().getIntVal());
+	}
+
+	@Test
+	public void createCustomReadinessPortFromAppRequest() {
+		int defaultPort = 8080;
+		int readinessPort = 8090;
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		Resource resource = getResource();
+		Map<String, String> props = new HashMap<>();
+		props.put("spring.cloud.deployer.kubernetes.readinessProbePort", Integer.toString(readinessPort));
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
+				resource, props);
+
+		Container container = defaultContainerFactory.create("app-test",
+				appDeploymentRequest, defaultPort, true);
+		assertNotNull(container);
+
+		List<ContainerPort> containerPorts = container.getPorts();
+		assertNotNull(containerPorts);
+
+		assertTrue("Only two container ports should be set", containerPorts.size() == 2);
+		assertTrue(8080 == containerPorts.get(0).getContainerPort());
+		assertTrue(8080 == containerPorts.get(0).getHostPort());
+		assertTrue(8090 == containerPorts.get(1).getContainerPort());
+		assertTrue(8090 == containerPorts.get(1).getHostPort());
+		assertTrue(8090 == container.getReadinessProbe().getHttpGet().getPort().getIntVal());
+	}
+
+	@Test
+	public void createCustomReadinessPortFromProperties() {
+		int defaultPort = 8080;
+		int readinessPort = 8090;
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.setReadinessProbePort(readinessPort);
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		Resource resource = getResource();
+		Map<String, String> props = new HashMap<>();
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
+				resource, props);
+
+		Container container = defaultContainerFactory.create("app-test",
+				appDeploymentRequest, defaultPort, true);
+		assertNotNull(container);
+
+		List<ContainerPort> containerPorts = container.getPorts();
+		assertNotNull(containerPorts);
+
+		assertTrue("Only two container ports should be set", containerPorts.size() == 2);
+		assertTrue(8080 == containerPorts.get(0).getContainerPort());
+		assertTrue(8080 == containerPorts.get(0).getHostPort());
+		assertTrue(8090 == containerPorts.get(1).getContainerPort());
+		assertTrue(8090 == containerPorts.get(1).getHostPort());
+		assertTrue(8090 == container.getReadinessProbe().getHttpGet().getPort().getIntVal());
+	}
+
+	@Test
+	public void createDefaultProbePorts() {
+		int defaultPort = 8080;
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		Resource resource = getResource();
+		Map<String, String> props = new HashMap<>();
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
+				resource, props);
+
+		Container container = defaultContainerFactory.create("app-test",
+				appDeploymentRequest, defaultPort, true);
+		assertNotNull(container);
+		List<ContainerPort> containerPorts = container.getPorts();
+		assertNotNull(containerPorts);
+		assertTrue("Only the default container port should set", containerPorts.size() == 1);
+		assertTrue(8080 == containerPorts.get(0).getContainerPort());
+		assertTrue(8080 == containerPorts.get(0).getHostPort());
+		assertTrue(8080 == container.getLivenessProbe().getHttpGet().getPort().getIntVal());
+		assertTrue(8080 == container.getReadinessProbe().getHttpGet().getPort().getIntVal());
 	}
 
 	private Resource getResource() {

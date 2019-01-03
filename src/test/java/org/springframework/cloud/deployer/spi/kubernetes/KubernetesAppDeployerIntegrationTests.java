@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,16 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.fail;
-import static org.springframework.cloud.deployer.spi.app.DeploymentState.deployed;
-import static org.springframework.cloud.deployer.spi.app.DeploymentState.failed;
-import static org.springframework.cloud.deployer.spi.app.DeploymentState.unknown;
-import static org.springframework.cloud.deployer.spi.kubernetes.AbstractKubernetesDeployer.SPRING_APP_KEY;
-import static org.springframework.cloud.deployer.spi.test.EventuallyMatcher.eventually;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.HostPathVolumeSource;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.Volume;
@@ -41,6 +38,7 @@ import org.hamcrest.Matcher;
 import org.hamcrest.Matchers;
 import org.junit.ClassRule;
 import org.junit.Test;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.deployer.resource.docker.DockerResource;
@@ -53,11 +51,17 @@ import org.springframework.cloud.deployer.spi.test.Timeout;
 import org.springframework.core.io.Resource;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.IOException;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+import static org.springframework.cloud.deployer.spi.app.DeploymentState.deployed;
+import static org.springframework.cloud.deployer.spi.app.DeploymentState.failed;
+import static org.springframework.cloud.deployer.spi.app.DeploymentState.unknown;
+import static org.springframework.cloud.deployer.spi.kubernetes.AbstractKubernetesDeployer.SPRING_APP_KEY;
+import static org.springframework.cloud.deployer.spi.test.EventuallyMatcher.eventually;
 
 /**
  * Integration tests for {@link KubernetesAppDeployer}.
@@ -65,6 +69,7 @@ import java.util.UUID;
  * @author Thomas Risberg
  * @author Donovan Muller
  * @Author David Turanski
+ * @author Chris Schaefer
  */
 @SpringBootTest(classes = {KubernetesAutoConfiguration.class}, properties = {
 	"logging.level.org.springframework.cloud.deployer.spi=INFO"
@@ -92,7 +97,6 @@ public class KubernetesAppDeployerIntegrationTests extends AbstractAppDeployerIn
 	public void testFailedDeploymentWithLoadBalancer() {
 		log.info("Testing {}...", "FailedDeploymentWithLoadBalancer");
 		KubernetesDeployerProperties deployProperties = new KubernetesDeployerProperties();
-		deployProperties.setCreateDeployment(originalProperties.isCreateDeployment());
 		deployProperties.setCreateLoadBalancer(true);
 		deployProperties.setLivenessProbePeriod(10);
 		deployProperties.setMaxTerminatedErrorRestarts(1);
@@ -124,7 +128,6 @@ public class KubernetesAppDeployerIntegrationTests extends AbstractAppDeployerIn
 	public void testGoodDeploymentWithLoadBalancer() {
 		log.info("Testing {}...", "GoodDeploymentWithLoadBalancer");
 		KubernetesDeployerProperties deployProperties = new KubernetesDeployerProperties();
-		deployProperties.setCreateDeployment(originalProperties.isCreateDeployment());
 		deployProperties.setCreateLoadBalancer(true);
 		deployProperties.setMinutesToWaitForLoadBalancer(1);
 		ContainerFactory containerFactory = new DefaultContainerFactory(deployProperties);
@@ -151,7 +154,6 @@ public class KubernetesAppDeployerIntegrationTests extends AbstractAppDeployerIn
 	public void testDeploymentWithLoadBalancerHasUrlAndAnnotation() {
 		log.info("Testing {}...", "DeploymentWithLoadBalancerShowsUrl");
 		KubernetesDeployerProperties deployProperties = new KubernetesDeployerProperties();
-		deployProperties.setCreateDeployment(originalProperties.isCreateDeployment());
 		deployProperties.setCreateLoadBalancer(true);
 		deployProperties.setMinutesToWaitForLoadBalancer(1);
 		ContainerFactory containerFactory = new DefaultContainerFactory(deployProperties);
@@ -160,7 +162,7 @@ public class KubernetesAppDeployerIntegrationTests extends AbstractAppDeployerIn
 		AppDefinition definition = new AppDefinition(randomName(), null);
 		Resource resource = testApplication();
 		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource,
-				Collections.singletonMap("spring.cloud.deployer.kubernetes.serviceAnnotations","foo:bar"));
+				Collections.singletonMap("spring.cloud.deployer.kubernetes.serviceAnnotations","foo:bar,fab:baz"));
 
 		log.info("Deploying {}...", request.getDefinition().getName());
 		String deploymentId = lbAppDeployer.deploy(request);
@@ -178,12 +180,60 @@ public class KubernetesAppDeployerIntegrationTests extends AbstractAppDeployerIn
 		Map<String, String> annotations = kubernetesClient.services().withName(request.getDefinition().getName()).get()
 				.getMetadata().getAnnotations();
 		assertThat(annotations, is(notNullValue()));
-		assertThat(annotations.size(), is(1));
+		assertThat(annotations.size(), is(2));
+		assertTrue(annotations.containsKey("foo"));
 		assertThat(annotations.get("foo"), is("bar"));
+		assertTrue(annotations.containsKey("fab"));
+		assertThat(annotations.get("fab"), is("baz"));
 
 		log.info("Undeploying {}...", deploymentId);
 		timeout = undeploymentTimeout();
 		lbAppDeployer.undeploy(deploymentId);
+		assertThat(deploymentId, eventually(hasStatusThat(
+				Matchers.hasProperty("state", is(unknown))), timeout.maxAttempts, timeout.pause));
+	}
+
+	@Test
+	public void testDeploymentWithPodAnnotation() {
+		log.info("Testing {}...", "DeploymentWithPodAnnotation");
+		KubernetesDeployerProperties deployProperties = new KubernetesDeployerProperties();
+		ContainerFactory containerFactory = new DefaultContainerFactory(deployProperties);
+		KubernetesAppDeployer appDeployer = new KubernetesAppDeployer(deployProperties, kubernetesClient, containerFactory);
+
+		AppDefinition definition = new AppDefinition(randomName(), null);
+		Resource resource = testApplication();
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource,
+				Collections.singletonMap("spring.cloud.deployer.kubernetes.podAnnotations",
+						"iam.amazonaws.com/role:role-arn,foo:bar"));
+
+		log.info("Deploying {}...", request.getDefinition().getName());
+		String deploymentId = appDeployer.deploy(request);
+		Timeout timeout = deploymentTimeout();
+		assertThat(deploymentId, eventually(hasStatusThat(
+				Matchers.hasProperty("state", is(deployed))), timeout.maxAttempts, timeout.pause));
+
+		log.info("Checking pod spec annotations of {}...", request.getDefinition().getName());
+
+		List<Pod> pods = kubernetesClient.pods().withLabel("spring-deployment-id", request.getDefinition()
+				.getName()).list().getItems();
+
+		assertThat(pods, is(notNullValue()));
+		assertThat(pods.size(), is(1));
+
+		Pod pod = pods.get(0);
+		Map<String, String> annotations = pod.getMetadata().getAnnotations();
+		log.info("Number of annotations found" + annotations.size());
+		for (Map.Entry<String, String> annotationsEntry: annotations.entrySet()) {
+			log.info("Annotation key: " + annotationsEntry.getKey());
+		}
+		assertTrue(annotations.containsKey("iam.amazonaws.com/role"));
+		assertTrue(annotations.get("iam.amazonaws.com/role").equals("role-arn"));
+		assertTrue(annotations.containsKey("foo"));
+		assertTrue(annotations.get("foo").equals("bar"));
+
+		log.info("Undeploying {}...", deploymentId);
+		timeout = undeploymentTimeout();
+		appDeployer.undeploy(deploymentId);
 		assertThat(deploymentId, eventually(hasStatusThat(
 				Matchers.hasProperty("state", is(unknown))), timeout.maxAttempts, timeout.pause));
 	}
@@ -196,7 +246,6 @@ public class KubernetesAppDeployerIntegrationTests extends AbstractAppDeployerIn
 		String subPath = randomName();
 		String mountName = "mount";
 		KubernetesDeployerProperties deployProperties = new KubernetesDeployerProperties();
-		deployProperties.setCreateDeployment(originalProperties.isCreateDeployment());
 		deployProperties.setVolumes(Collections.singletonList(new VolumeBuilder()
 				.withHostPath(new HostPathVolumeSource(hostPath))
 				.withName(mountName)

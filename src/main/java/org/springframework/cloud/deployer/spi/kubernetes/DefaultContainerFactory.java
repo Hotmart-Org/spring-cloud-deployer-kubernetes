@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@ import java.util.stream.Collectors;
  * @author Thomas Risberg
  * @author Donovan Muller
  * @author David Turanski
+ * @author Chris Schaefer
  */
 public class DefaultContainerFactory implements ContainerFactory {
 
@@ -67,6 +68,7 @@ public class DefaultContainerFactory implements ContainerFactory {
 	}
 
 	@Override
+	@Deprecated
 	public Container create(String appId, AppDeploymentRequest request, Integer port, Integer instanceIndex,
 		boolean hostNetwork) {
 		return this.create(appId, request, port, hostNetwork);
@@ -116,6 +118,9 @@ public class DefaultContainerFactory implements ContainerFactory {
 			catch (JsonProcessingException e) {
 				throw new IllegalStateException("Unable to create SPRING_APPLICATION_JSON", e);
 			}
+
+			appArgs = request.getCommandlineArguments();
+
 			break;
 		case shell:
 			for (String key : request.getDefinition().getProperties().keySet()) {
@@ -147,17 +152,12 @@ public class DefaultContainerFactory implements ContainerFactory {
 			else {
 				container.addNewPort().withContainerPort(port).endPort();
 			}
-			container.withReadinessProbe(
-				new ProbeCreator(port, properties.getReadinessProbePath(), properties.getReadinessProbeTimeout(),
-					properties.getReadinessProbeDelay(), properties.getReadinessProbePeriod(), "readiness",
-					request.getDeploymentProperties()).create()).withLivenessProbe(
-				new ProbeCreator(port, properties.getLivenessProbePath(), properties.getLivenessProbeTimeout(),
-					properties.getLivenessProbeDelay(), properties.getLivenessProbePeriod(), "liveness",
-					request.getDeploymentProperties()).create());
 		}
 
-		//Add additional specified ports.  Further work is needed to add probe customization for each port.
 		List<Integer> additionalPorts = getContainerPorts(request);
+
+		createProbes(request, container, port, additionalPorts);
+
 		if (!additionalPorts.isEmpty()) {
 			for (Integer containerPort : additionalPorts) {
 				if (hostNetwork) {
@@ -321,6 +321,51 @@ public class DefaultContainerFactory implements ContainerFactory {
 			entryPointStyle = properties.getEntryPointStyle();
 		}
 		return entryPointStyle;
+	}
+
+	private void createProbes(AppDeploymentRequest request, ContainerBuilder container, Integer port,
+							  List<Integer> additionalPorts) {
+		Integer livenessPort = getProbePort(request, port, properties.getLivenessProbePort(), "liveness");
+		Integer readinessPort = getProbePort(request, port, properties.getReadinessProbePort(), "readiness");
+
+		if (livenessPort != null && !additionalPorts.contains(livenessPort) && !livenessPort.equals(port)) {
+			additionalPorts.add(livenessPort);
+		}
+
+		if (readinessPort != null && !additionalPorts.contains(readinessPort) && !readinessPort.equals(port)) {
+			additionalPorts.add(readinessPort);
+		}
+
+		if (readinessPort != null) {
+			container.withReadinessProbe(
+					new ProbeCreator(readinessPort, properties.getReadinessProbePath(), properties.getReadinessProbeTimeout(),
+							properties.getReadinessProbeDelay(), properties.getReadinessProbePeriod(), "readiness",
+							request.getDeploymentProperties()).create());
+		}
+
+		if (livenessPort != null) {
+			container.withLivenessProbe(
+					new ProbeCreator(livenessPort, properties.getLivenessProbePath(), properties.getLivenessProbeTimeout(),
+							properties.getLivenessProbeDelay(), properties.getLivenessProbePeriod(), "liveness",
+							request.getDeploymentProperties()).create());
+		}
+	}
+
+	private Integer getProbePort(AppDeploymentRequest request, Integer defaultPort, Integer propertiesProbePort, String prefix) {
+		Integer probePort = null;
+		String probeKey = "spring.cloud.deployer.kubernetes." + prefix + "ProbePort";
+
+		if (request.getDeploymentProperties().containsKey(probeKey)) {
+			probePort = Integer.parseInt(request.getDeploymentProperties().get(probeKey));
+		}
+		else if (propertiesProbePort != null) {
+			probePort = propertiesProbePort;
+		}
+		else if (defaultPort != null) {
+			probePort = defaultPort;
+		}
+
+		return probePort;
 	}
 
 	/**

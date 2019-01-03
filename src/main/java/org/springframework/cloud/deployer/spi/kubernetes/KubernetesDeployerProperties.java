@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,19 @@ package org.springframework.cloud.deployer.spi.kubernetes;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
+import io.fabric8.kubernetes.client.Config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * @author Florian Rosenberg
  * @author Thomas Risberg
  * @author Donovan Muller
+ * @author Ilayaperumal Gopinathan
+ * @author Leonardo Diniz
+ * @author Chris Schaefer
  */
 @ConfigurationProperties(prefix = "spring.cloud.deployer.kubernetes")
 public class KubernetesDeployerProperties {
@@ -36,6 +40,16 @@ public class KubernetesDeployerProperties {
 	 * Constants for app deployment properties that don't have a deployer level default property.
 	 */
 	public static final String KUBERNETES_DEPLOYMENT_NODE_SELECTOR = "spring.cloud.deployer.kubernetes.deployment.nodeSelector";
+
+	private Config fabric8 = Config.autoConfigure(null);
+
+	public Config getFabric8() {
+		return this.fabric8;
+	}
+
+	public void setFabric8(Config fabric8) {
+		this.fabric8 = fabric8;
+	}
 
 	/**
 	 * Encapsulates resources for Kubernetes Container resource requests and limits
@@ -68,6 +82,42 @@ public class KubernetesDeployerProperties {
 
 		public void setMemory(String memory) {
 			this.memory = memory;
+		}
+	}
+
+	public static class StatefulSet {
+
+		private VolumeClaimTemplate volumeClaimTemplate = new VolumeClaimTemplate();
+
+		public VolumeClaimTemplate getVolumeClaimTemplate() {
+			return volumeClaimTemplate;
+		}
+
+		public void setVolumeClaimTemplate(VolumeClaimTemplate volumeClaimTemplate) {
+			this.volumeClaimTemplate = volumeClaimTemplate;
+		}
+
+		public static class VolumeClaimTemplate {
+
+			private String storage = "10m";
+
+			private String storageClassName;
+
+			public String getStorage() {
+				return storage;
+			}
+
+			public void setStorage(String storage) {
+				this.storage = storage;
+			}
+
+			public String getStorageClassName() {
+				return storageClassName;
+			}
+
+			public void setStorageClassName(String storageClassName) {
+				this.storageClassName = storageClassName;
+			}
 		}
 	}
 
@@ -111,6 +161,11 @@ public class KubernetesDeployerProperties {
 	private String livenessProbePath = "/health";
 
 	/**
+	 * Port that app container has to respond on for liveness check.
+	 */
+	private Integer livenessProbePort = null;
+
+	/**
 	 * Delay in seconds when the readiness check of the app container
 	 * should start checking if the module is fully up and running.
 	 */
@@ -137,20 +192,9 @@ public class KubernetesDeployerProperties {
 	private String readinessProbePath = "/info";
 
 	/**
-	 * Memory to allocate for a Pod.
-	 *
-	 * @deprecated Use spring.cloud.deployer.kubernetes.limits.memory
+	 * Port that app container has to respond on for readiness check.
 	 */
-	@Deprecated
-	private String memory = "512Mi";
-
-	/**
-	 * CPU to allocate for a Pod.
-	 *
-	 * @deprecated Use spring.cloud.deployer.kubernetes.limits.cpu
-	 */
-	@Deprecated
-	private String cpu = "500m";
+	private Integer readinessProbePort = null;
 
 	/**
 	 * Memory and CPU limits (i.e. maximum needed values) to allocate for a Pod.
@@ -161,6 +205,11 @@ public class KubernetesDeployerProperties {
 	 * Memory and CPU requests (i.e. guaranteed needed values) to allocate for a Pod.
 	 */
 	private Resources requests = new Resources();
+
+	/**
+	 * Resources to assign for VolumeClaimTemplates (identified by metadata name) inside StatefulSet.
+	 */
+	private StatefulSet statefulSet = new StatefulSet();
 
 	/**
 	 * Environment variables to set for any deployed app container. To be used for service binding.
@@ -181,6 +230,16 @@ public class KubernetesDeployerProperties {
 	 * Service annotations to set for the service created for each app.
 	 */
 	private String serviceAnnotations = null;
+
+	/**
+	 * Pod annotations to set for the pod created for each deployment.
+	 */
+	private String podAnnotations;
+
+	/**
+	 * Job annotations to set for the pod or job created for a job.
+	 */
+	private String jobAnnotations;
 
 	/**
 	 * Time to wait for load balancer to be available before attempting delete of service (in minutes).
@@ -282,6 +341,14 @@ public class KubernetesDeployerProperties {
 		return livenessProbePath;
 	}
 
+	public Integer getLivenessProbePort() {
+		return livenessProbePort;
+	}
+
+	public void setLivenessProbePort(Integer livenessProbePort) {
+		this.livenessProbePort = livenessProbePort;
+	}
+
 	public void setLivenessProbePath(String livenessProbePath) {
 		this.livenessProbePath = livenessProbePath;
 	}
@@ -318,12 +385,29 @@ public class KubernetesDeployerProperties {
 		this.readinessProbePath = readinessProbePath;
 	}
 
+	public Integer getReadinessProbePort() {
+		return readinessProbePort;
+	}
+
+	public void setReadinessProbePort(Integer readinessProbePort) {
+		this.readinessProbePort = readinessProbePort;
+	}
+
+	public StatefulSet getStatefulSet() {
+		return statefulSet;
+	}
+
+	public void setStatefulSet(
+			StatefulSet statefulSet) {
+		this.statefulSet = statefulSet;
+	}
+
 	/**
 	 * @deprecated Use {@link #getLimits()}
 	 */
 	@Deprecated
 	public String getMemory() {
-		return memory;
+		return getLimits().getMemory();
 	}
 
 	/**
@@ -331,7 +415,7 @@ public class KubernetesDeployerProperties {
 	 */
 	@Deprecated
 	public void setMemory(String memory) {
-		this.memory = memory;
+		getLimits().setMemory(memory);
 	}
 
 	/**
@@ -339,7 +423,7 @@ public class KubernetesDeployerProperties {
 	 */
 	@Deprecated
 	public String getCpu() {
-		return cpu;
+		return getLimits().getCpu();
 	}
 
 	/**
@@ -347,7 +431,7 @@ public class KubernetesDeployerProperties {
 	 */
 	@Deprecated
 	public void setCpu(String cpu) {
-		this.cpu = cpu;
+		getLimits().setCpu(cpu);
 	}
 
 	public String[] getEnvironmentVariables() {
@@ -380,6 +464,22 @@ public class KubernetesDeployerProperties {
 
 	public void setServiceAnnotations(String serviceAnnotations) {
 		this.serviceAnnotations = serviceAnnotations;
+	}
+
+	public String getPodAnnotations() {
+		return podAnnotations;
+	}
+
+	public void setPodAnnotations(String podAnnotations) {
+		this.podAnnotations = podAnnotations;
+	}
+
+	public String getJobAnnotations() {
+		return jobAnnotations;
+	}
+
+	public void setJobAnnotations(String jobAnnotations) {
+		this.jobAnnotations = jobAnnotations;
 	}
 
 	public int getMinutesToWaitForLoadBalancer() {

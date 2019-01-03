@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ import java.util.stream.Collectors;
  * @author Mark Fisher
  * @author Donovan Muller
  * @author David Turanski
+ * @author Chris Schaefer
  */
 public class AbstractKubernetesDeployer {
 
@@ -139,9 +140,10 @@ public class AbstractKubernetesDeployer {
 		boolean neverRestart) {
 		PodSpecBuilder podSpec = new PodSpecBuilder();
 
-		// Add image secrets if set
-		if (properties.getImagePullSecret() != null) {
-			podSpec.addNewImagePullSecret(properties.getImagePullSecret());
+		String imagePullSecret = getImagePullSecret(request);
+
+		if (imagePullSecret != null) {
+			podSpec.addNewImagePullSecret(imagePullSecret);
 		}
 
 		boolean hostNetwork = getHostNetwork(request);
@@ -254,10 +256,7 @@ public class AbstractKubernetesDeployer {
 		// Use server property if there is no request setting
 		if (memOverride == null) {
 			if (properties.getLimits().getMemory() != null) {
-				// Non-deprecated value has priority
 				memOverride = properties.getLimits().getMemory();
-			} else {
-				memOverride = properties.getMemory();
 			}
 		}
 
@@ -282,10 +281,7 @@ public class AbstractKubernetesDeployer {
 		// Use server property if there is no request setting
 		if (cpuOverride == null) {
 			if (properties.getLimits().getCpu() != null) {
-				// Non-deprecated value has priority
 				cpuOverride = properties.getLimits().getCpu();
-			} else {
-				cpuOverride = properties.getCpu();
 			}
 		}
 
@@ -352,6 +348,23 @@ public class AbstractKubernetesDeployer {
 		return requests;
 	}
 
+	protected String getStatefulSetStorageClassName(AppDeploymentRequest request) {
+		String storageClassName = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.statefulSet.volumeClaimTemplate.storageClassName");
+		if (storageClassName == null && properties.getStatefulSet() != null && properties.getStatefulSet().getVolumeClaimTemplate() != null) {
+			storageClassName = properties.getStatefulSet().getVolumeClaimTemplate().getStorageClassName();
+		}
+		return storageClassName;
+	}
+
+	protected String getStatefulSetStorage(AppDeploymentRequest request) {
+		String storage = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.statefulSet.volumeClaimTemplate.storage");
+		if (storage == null && properties.getStatefulSet() != null && properties.getStatefulSet().getVolumeClaimTemplate() != null) {
+			storage = properties.getStatefulSet().getVolumeClaimTemplate().getStorage();
+		}
+		long storageAmount = ByteSizeUtils.parseToMebibytes(storage);
+		return storageAmount + "Mi";
+	}
+
 	/**
 	 * Get the hostNetwork setting for the deployment request.
 	 *
@@ -403,5 +416,16 @@ public class AbstractKubernetesDeployer {
 		}
 		long memAmount = ByteSizeUtils.parseToMebibytes(mem);
 		return memAmount + "Mi";
+	}
+
+	private String getImagePullSecret(AppDeploymentRequest request) {
+		String imagePullSecret = request.getDeploymentProperties()
+				.getOrDefault("spring.cloud.deployer.kubernetes.imagePullSecret", "");
+
+		if(StringUtils.isEmpty(imagePullSecret)) {
+			imagePullSecret = properties.getImagePullSecret();
+		}
+
+		return imagePullSecret;
 	}
 }

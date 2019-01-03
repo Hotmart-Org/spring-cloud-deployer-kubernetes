@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
-import static java.lang.String.format;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Container;
@@ -29,8 +27,6 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.Quantity;
-import io.fabric8.kubernetes.api.model.ReplicationController;
-import io.fabric8.kubernetes.api.model.ReplicationControllerBuilder;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
 import io.fabric8.kubernetes.api.model.ServicePort;
@@ -48,13 +44,14 @@ import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.dsl.FilterWatchListDeletable;
 import okhttp3.Response;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.app.AppStatus;
 import org.springframework.cloud.deployer.spi.app.DeploymentState;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.core.RuntimeEnvironmentInfo;
-import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
@@ -73,6 +70,8 @@ import java.util.Map;
  * @author Mark Fisher
  * @author Donovan Muller
  * @author David Turanski
+ * @author Ilayaperumal Gopinathan
+ * @author Chris Schaefer
  */
 public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements AppDeployer {
 
@@ -82,7 +81,7 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 
 	private ObjectMapper objectMapper = new ObjectMapper();
 
-
+	protected final Log logger = LogFactory.getLog(getClass().getName());
 
 	@Autowired
 	public KubernetesAppDeployer(KubernetesDeployerProperties properties, KubernetesClient client) {
@@ -94,15 +93,12 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 		ContainerFactory containerFactory) {
 		this.properties = properties;
 		this.client = client;
-
 		if (client != null) {
 			this.httpClient = new KubernetesHttpClient(client);
-			this.STATEFULSETS_ENDPOINT = String.format("apis/apps/v1beta1/namespaces/%s/statefulsets",
-				client.getNamespace());
+			this.STATEFULSETS_ENDPOINT = String.format("apis/apps/%s/namespaces/%s/statefulsets",
+					KubernetesHttpClient.getApiVersionForK8sVersionFromCluster(this.httpClient), client.getNamespace());
 		}
-
 		this.containerFactory = containerFactory;
-
 	}
 
 	@Override
@@ -139,14 +135,9 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 				Map<String, String> idMap = createIdMap(appId, request);
 				logger.debug(String.format("Creating Service: %s on {}", appId, externalPort));
 				createService(appId, request, idMap, externalPort);
-				if (properties.isCreateDeployment()) {
-					logger.debug(String.format("Creating Deployment: %s", appId));
-					createDeployment(appId, request, idMap, externalPort);
-				}
-				else {
-					logger.debug(String.format("Creating Replication Controller: %s", appId));
-					createReplicationController(appId, request, idMap, externalPort);
-				}
+
+				logger.debug(String.format("Creating Deployment: %s", appId));
+				createDeployment(appId, request, idMap, externalPort);
 			}
 
 			return appId;
@@ -302,11 +293,13 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 
 		int replicas = getCountFromRequest(request);
 
+		Map<String, String> annotations = getPodAnnotations(request);
+
 		Deployment d = new DeploymentBuilder().withNewMetadata().withName(appId).withLabels(idMap)
 			.addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endMetadata().withNewSpec().withReplicas(replicas)
 			.withNewTemplate().withNewMetadata().withLabels(idMap).addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE)
-			.endMetadata().withSpec(createPodSpec(appId, request, Integer.valueOf(externalPort), false)).endTemplate()
-			.endSpec().build();
+			.withAnnotations(annotations).endMetadata().withSpec(createPodSpec(appId, request, externalPort, false))
+			.endTemplate().endSpec().build();
 
 		return client.extensions().deployments().create(d);
 	}
@@ -314,23 +307,6 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 	private int getCountFromRequest(AppDeploymentRequest request) {
 		String countProperty = request.getDeploymentProperties().get(COUNT_PROPERTY_KEY);
 		return (countProperty != null) ? Integer.parseInt(countProperty) : 1;
-
-	}
-
-	@Deprecated
-	private ReplicationController createReplicationController(String appId, AppDeploymentRequest request,
-		Map<String, String> idMap, int externalPort) {
-
-		int replicas = getCountFromRequest(request);
-
-		ReplicationController rc = new ReplicationControllerBuilder().withNewMetadata().withName(appId)
-			.withLabels(idMap).addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endMetadata().withNewSpec()
-			.withReplicas(replicas).withSelector(idMap).withNewTemplate().withNewMetadata().withLabels(idMap)
-			.addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endMetadata()
-			.withSpec(createPodSpec(appId, request, Integer.valueOf(externalPort), false)).endTemplate().endSpec()
-			.build();
-
-		return client.replicationControllers().create(rc);
 	}
 
 	/**
@@ -345,7 +321,15 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 
 		logger.debug(String.format("Creating StatefulSet: %s on %d with %d replicas", appId, externalPort, replicas));
 
-		Map<String, Quantity> emptyStorageResource = Collections.singletonMap("storage", new Quantity("0Mi"));
+		Map<String, Quantity> storageResource = Collections.singletonMap("storage", new Quantity(getStatefulSetStorage(request)));
+
+		String storageClassName = getStatefulSetStorageClassName(request);
+
+		PersistentVolumeClaimBuilder persistentVolumeClaimBuilder = new PersistentVolumeClaimBuilder()
+				.withNewSpec().withStorageClassName(storageClassName).withAccessModes(Arrays.asList("ReadWriteOnce"))
+				.withNewResources().addToLimits(storageResource).addToRequests(storageResource)
+				.endResources().endSpec().withNewMetadata().withName(appId).withLabels(idMap)
+				.addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endMetadata();
 
 		PodSpec podSpec = createPodSpec(appId, request, Integer.valueOf(externalPort), false);
 
@@ -357,11 +341,8 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 		podSpec.getInitContainers().add(createInitContainer());
 
 		StatefulSetSpec spec = new StatefulSetSpecBuilder().withNewSelector().addToMatchLabels(idMap)
-			.addToMatchLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endSelector().withVolumeClaimTemplates(
-				new PersistentVolumeClaimBuilder().withNewSpec().withAccessModes(Arrays.asList("ReadWriteOnce"))
-					.withNewResources().addToLimits(emptyStorageResource).addToRequests(emptyStorageResource)
-					.endResources().endSpec().withNewMetadata().withName(appId).withLabels(idMap)
-					.addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endMetadata().build()).withServiceName(appId)
+			.addToMatchLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE).endSelector()
+			.withVolumeClaimTemplates(persistentVolumeClaimBuilder.build()).withServiceName(appId)
 			.withReplicas(replicas).withNewTemplate().withNewMetadata().withLabels(idMap)
 			.addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE)
 			.endMetadata().withSpec(podSpec).endTemplate().build();
@@ -375,10 +356,10 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 			statefulSetMap = objectMapper.readValue(ssString, HashMap.class);
 		}
 		catch (JsonProcessingException e) {
-			e.printStackTrace();
+			logger.error("Could not create StatefulSet.", e);
 		}
 		catch (IOException e) {
-			e.printStackTrace();
+			logger.error("Could not create StatefulSet.", e);
 		}
 
 		Map<String, Object> specMap = (Map) statefulSetMap.get("spec");
@@ -437,38 +418,33 @@ public class KubernetesAppDeployer extends AbstractKubernetesDeployer implements
 
 		spec.withSelector(idMap).addNewPortLike(servicePort).endPort();
 
-		Map<String, String> annotations = getServiceAnnotations(request.getDeploymentProperties());
+		Map<String, String> annotations = getServiceAnnotations(request);
 
 		client.services().inNamespace(client.getNamespace()).createNew().withNewMetadata().withName(appId)
 			.withLabels(idMap).withAnnotations(annotations).addToLabels(SPRING_MARKER_KEY, SPRING_MARKER_VALUE)
 			.endMetadata().withSpec(spec.build()).done();
 	}
 
-	/**
-	 * Get the service annotations for the deployment request.
-	 *
-	 * @param properties The deployment request deployment properties.
-	 * @return map of annottaions
-	 */
-	protected Map<String, String> getServiceAnnotations(Map<String, String> properties) {
-		Map<String, String> annotations = new HashMap<>();
-
-		String annotationsProperty = properties.getOrDefault("spring.cloud.deployer.kubernetes.serviceAnnotations", "");
+	private Map<String, String> getPodAnnotations(AppDeploymentRequest request) {
+		String annotationsProperty = request.getDeploymentProperties()
+				.getOrDefault("spring.cloud.deployer.kubernetes.podAnnotations", "");
 
 		if (StringUtils.isEmpty(annotationsProperty)) {
-			annotationsProperty = this.properties.getServiceAnnotations();
+			annotationsProperty = properties.getPodAnnotations();
 		}
 
-		if (StringUtils.hasText(annotationsProperty)) {
-			String[] annotationPairs = annotationsProperty.split(",");
-			for (String annotationPair : annotationPairs) {
-				String[] annotation = annotationPair.split(":");
-				Assert.isTrue(annotation.length == 2, format("Invalid annotation value: '{}'", annotationPair));
-				annotations.put(annotation[0].trim(), annotation[1].trim());
-			}
+		return PropertyParserUtils.getAnnotations(annotationsProperty);
+	}
+
+	private Map<String, String> getServiceAnnotations(AppDeploymentRequest request) {
+		String annotationsProperty = request.getDeploymentProperties()
+				.getOrDefault("spring.cloud.deployer.kubernetes.serviceAnnotations", "");
+
+		if (StringUtils.isEmpty(annotationsProperty)) {
+			annotationsProperty = properties.getServiceAnnotations();
 		}
 
-		return annotations;
+		return PropertyParserUtils.getAnnotations(annotationsProperty);
 	}
 
 	/**
