@@ -16,26 +16,32 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.EnvVar;
-import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.api.model.HostPathVolumeSource;
+import io.fabric8.kubernetes.api.model.HostPathVolumeSourceBuilder;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.VolumeBuilder;
-import io.fabric8.kubernetes.api.model.extensions.StatefulSet;
 import org.junit.Test;
-import org.springframework.boot.bind.YamlConfigurationFactory;
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.springframework.cloud.deployer.resource.docker.DockerResource;
 import org.springframework.cloud.deployer.spi.core.AppDefinition;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Unit tests for {@link KubernetesAppDeployer}
@@ -91,8 +97,11 @@ public class KubernetesAppDeployerTests {
 		deployer = new KubernetesAppDeployer(bindDeployerProperties(), null);
 		podSpec = deployer.createPodSpec("1", appDeploymentRequest, 8080, false);
 
+		HostPathVolumeSource hostPathVolumeSource = new HostPathVolumeSourceBuilder()
+				.withPath("/test/override/hostPath").build();
+
 		assertThat(podSpec.getVolumes()).containsOnly(
-			new VolumeBuilder().withName("testhostpath").withNewHostPath("/test/override/hostPath").build(),
+			new VolumeBuilder().withName("testhostpath").withHostPath(hostPathVolumeSource).build(),
 			new VolumeBuilder().withName("testpvc").withNewPersistentVolumeClaim("testClaim", true).build(),
 			new VolumeBuilder().withName("testnfs").withNewNfs("/test/override/nfs", null, "192.168.1.1:111").build());
 	}
@@ -131,109 +140,7 @@ public class KubernetesAppDeployerTests {
 	}
 
 	@Test
-	public void createStatufulSet() throws Exception {
-
-		AppDefinition definition = new AppDefinition("app-test", null);
-		Map<String, String> props = new HashMap<>();
-		props.put(KubernetesAppDeployer.COUNT_PROPERTY_KEY, "3");
-		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
-		deployer = new KubernetesAppDeployer(bindDeployerProperties(), null);
-		String appId = deployer.createDeploymentId(appDeploymentRequest);
-		Map<String, String> idMap = deployer.createIdMap(appId, appDeploymentRequest);
-
-		ObjectMapper objectMapper = new ObjectMapper();
-
-		String statefulSetJson = deployer.createStatefulSet(appId, appDeploymentRequest, idMap, 8080);
-
-		Map<String, Object> statefulSetMap = objectMapper.readValue(statefulSetJson, HashMap.class);
-
-		Map<String, Object> specMap = (Map<String, Object>) statefulSetMap.get("spec");
-		assertThat(specMap.get("podManagementPolicy")).isEqualTo("Parallel");
-
-		StatefulSet statefulSet = objectMapper.readValue(statefulSetJson, StatefulSet.class);
-
-		assertThat(statefulSet.getSpec().getReplicas()).isEqualTo(3);
-		assertThat(statefulSet.getSpec().getServiceName()).isEqualTo(appId);
-		assertThat(statefulSet.getMetadata().getName()).isEqualTo(appId);
-
-		assertThat(statefulSet.getSpec().getSelector().getMatchLabels())
-				.containsAllEntriesOf(deployer.createIdMap(appId, appDeploymentRequest));
-		assertThat(statefulSet.getSpec().getSelector().getMatchLabels())
-				.contains(entry(KubernetesAppDeployer.SPRING_MARKER_KEY, KubernetesAppDeployer.SPRING_MARKER_VALUE));
-
-		assertThat(statefulSet.getSpec().getTemplate().getMetadata().getLabels()).containsAllEntriesOf(idMap);
-		assertThat(statefulSet.getSpec().getTemplate().getMetadata().getLabels())
-				.contains(entry(KubernetesAppDeployer.SPRING_MARKER_KEY, KubernetesAppDeployer.SPRING_MARKER_VALUE));
-
-		Container container = statefulSet.getSpec().getTemplate().getSpec().getContainers().get(0);
-
-		assertThat(container.getName()).isEqualTo(appId);
-		assertThat(container.getPorts().get(0).getContainerPort()).isEqualTo(8080);
-		assertThat(container.getImage()).isEqualTo(getResource().getURI().getSchemeSpecificPart().toString());
-
-		PersistentVolumeClaim pvc = statefulSet.getSpec().getVolumeClaimTemplates().get(0);
-		assertThat(pvc.getMetadata().getName()).isEqualTo(appId);
-
-		assertThat(pvc.getSpec().getAccessModes()).containsOnly("ReadWriteOnce");
-		assertThat(pvc.getSpec().getStorageClassName()).isNull();
-		assertThat(pvc.getSpec().getResources().getLimits().get("storage").getAmount()).isEqualTo("10Mi");
-		assertThat(pvc.getSpec().getResources().getRequests().get("storage").getAmount()).isEqualTo("10Mi");
-	}
-
-	@Test
-	public void createStatufulSetWithOverridingRequest() throws Exception {
-
-		AppDefinition definition = new AppDefinition("app-test", null);
-		Map<String, String> props = new HashMap<>();
-		props.put(KubernetesAppDeployer.COUNT_PROPERTY_KEY, "3");
-		props.put("spring.cloud.deployer.kubernetes.statefulSet.volumeClaimTemplate.storageClassName", "test");
-		props.put("spring.cloud.deployer.kubernetes.statefulSet.volumeClaimTemplate.storage", "1g");
-		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
-		deployer = new KubernetesAppDeployer(bindDeployerProperties(), null);
-		String appId = deployer.createDeploymentId(appDeploymentRequest);
-		Map<String, String> idMap = deployer.createIdMap(appId, appDeploymentRequest);
-
-		ObjectMapper objectMapper = new ObjectMapper();
-
-		String statefulSetJson = deployer.createStatefulSet(appId, appDeploymentRequest, idMap, 8080);
-
-		Map<String, Object> statefulSetMap = objectMapper.readValue(statefulSetJson, HashMap.class);
-
-		Map<String, Object> specMap = (Map<String, Object>) statefulSetMap.get("spec");
-		assertThat(specMap.get("podManagementPolicy")).isEqualTo("Parallel");
-
-		StatefulSet statefulSet = objectMapper.readValue(statefulSetJson, StatefulSet.class);
-
-		assertThat(statefulSet.getSpec().getReplicas()).isEqualTo(3);
-		assertThat(statefulSet.getSpec().getServiceName()).isEqualTo(appId);
-		assertThat(statefulSet.getMetadata().getName()).isEqualTo(appId);
-
-		assertThat(statefulSet.getSpec().getSelector().getMatchLabels())
-				.containsAllEntriesOf(deployer.createIdMap(appId, appDeploymentRequest));
-		assertThat(statefulSet.getSpec().getSelector().getMatchLabels())
-				.contains(entry(KubernetesAppDeployer.SPRING_MARKER_KEY, KubernetesAppDeployer.SPRING_MARKER_VALUE));
-
-		assertThat(statefulSet.getSpec().getTemplate().getMetadata().getLabels()).containsAllEntriesOf(idMap);
-		assertThat(statefulSet.getSpec().getTemplate().getMetadata().getLabels())
-				.contains(entry(KubernetesAppDeployer.SPRING_MARKER_KEY, KubernetesAppDeployer.SPRING_MARKER_VALUE));
-
-		Container container = statefulSet.getSpec().getTemplate().getSpec().getContainers().get(0);
-
-		assertThat(container.getName()).isEqualTo(appId);
-		assertThat(container.getPorts().get(0).getContainerPort()).isEqualTo(8080);
-		assertThat(container.getImage()).isEqualTo(getResource().getURI().getSchemeSpecificPart().toString());
-
-		PersistentVolumeClaim pvc = statefulSet.getSpec().getVolumeClaimTemplates().get(0);
-		assertThat(pvc.getMetadata().getName()).isEqualTo(appId);
-
-		assertThat(pvc.getSpec().getAccessModes()).containsOnly("ReadWriteOnce");
-		assertThat(pvc.getSpec().getStorageClassName()).isEqualTo("test");
-		assertThat(pvc.getSpec().getResources().getLimits().get("storage").getAmount()).isEqualTo("1024Mi");
-		assertThat(pvc.getSpec().getResources().getRequests().get("storage").getAmount()).isEqualTo("1024Mi");
-	}
-
-	@Test
-	public void deployWithImagePullSecretDeploymentProperty() throws Exception {
+	public void deployWithImagePullSecretDeploymentProperty() {
 		AppDefinition definition = new AppDefinition("app-test", null);
 
 		Map<String, String> props = new HashMap<>();
@@ -249,7 +156,7 @@ public class KubernetesAppDeployerTests {
 	}
 
 	@Test
-	public void deployWithImagePullSecretDeployerProperty() throws Exception {
+	public void deployWithImagePullSecretDeployerProperty() {
 		AppDefinition definition = new AppDefinition("app-test", null);
 
 		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), null);
@@ -264,15 +171,109 @@ public class KubernetesAppDeployerTests {
 		assertThat(podSpec.getImagePullSecrets().get(0).getName()).isEqualTo("regcred");
 	}
 
+	@Test
+	public void deployWithDeploymentServiceAccountNameDeploymentProperties() {
+		AppDefinition definition = new AppDefinition("app-test", null);
+
+		Map<String, String> props = new HashMap<>();
+		props.put("spring.cloud.deployer.kubernetes.deploymentServiceAccountName", "myserviceaccount");
+
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
+
+		deployer = new KubernetesAppDeployer(new KubernetesDeployerProperties(), null);
+		PodSpec podSpec = deployer.createPodSpec("app-test", appDeploymentRequest, null, false);
+
+		assertNotNull(podSpec.getServiceAccountName());
+		assertThat(podSpec.getServiceAccountName().equals("myserviceaccount"));
+	}
+
+	@Test
+	public void deployWithDeploymentServiceAccountNameDeployerProperty() {
+		AppDefinition definition = new AppDefinition("app-test", null);
+
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), null);
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.setDeploymentServiceAccountName("myserviceaccount");
+
+		deployer = new KubernetesAppDeployer(kubernetesDeployerProperties, null);
+		PodSpec podSpec = deployer.createPodSpec("app-test", appDeploymentRequest, null, false);
+
+		assertNotNull(podSpec.getServiceAccountName());
+		assertThat(podSpec.getServiceAccountName().equals("myserviceaccount"));
+	}
+
+	@Test
+	public void deployWithDeploymentServiceAccountNameDeploymentPropertyOverride() {
+		AppDefinition definition = new AppDefinition("app-test", null);
+
+		Map<String, String> props = new HashMap<>();
+		props.put("spring.cloud.deployer.kubernetes.deploymentServiceAccountName", "overridesan");
+
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.setDeploymentServiceAccountName("defaultsan");
+
+		deployer = new KubernetesAppDeployer(kubernetesDeployerProperties, null);
+		PodSpec podSpec = deployer.createPodSpec("app-test", appDeploymentRequest, null, false);
+
+		assertNotNull(podSpec.getServiceAccountName());
+		assertThat(podSpec.getServiceAccountName().equals("overridesan"));
+	}
+
+	@Test(expected = IllegalArgumentException.class)
+	public void testInvalidDeploymentLabelDelimiter() {
+		Map<String, String> props = Collections.singletonMap("spring.cloud.deployer.kubernetes.deploymentLabels",
+				"label1|value1");
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
+
+		KubernetesAppDeployer kubernetesAppDeployer = new KubernetesAppDeployer(new KubernetesDeployerProperties(), null);
+		kubernetesAppDeployer.getDeploymentLabels(appDeploymentRequest);
+	}
+
+	@Test(expected = IllegalArgumentException.class)
+	public void testInvalidMultipleDeploymentLabelDelimiter() {
+		Map<String, String> props = Collections.singletonMap("spring.cloud.deployer.kubernetes.deploymentLabels",
+				"label1:value1 label2:value2");
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
+
+		KubernetesAppDeployer kubernetesAppDeployer = new KubernetesAppDeployer(new KubernetesDeployerProperties(), null);
+		kubernetesAppDeployer.getDeploymentLabels(appDeploymentRequest);
+	}
+
+	@Test
+	public void testDeploymentLabels() {
+		Map<String, String> props = Collections.singletonMap("spring.cloud.deployer.kubernetes.deploymentLabels",
+				"label1:value1,label2:value2");
+
+		AppDefinition definition = new AppDefinition("app-test", null);
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), props);
+
+		KubernetesAppDeployer kubernetesAppDeployer = new KubernetesAppDeployer(new KubernetesDeployerProperties(), null);
+		Map<String, String> deploymentLabels = kubernetesAppDeployer.getDeploymentLabels(appDeploymentRequest);
+
+		assertTrue("Deployment labels should not be empty", !deploymentLabels.isEmpty());
+		assertEquals("Invalid number of labels", 2, deploymentLabels.size());
+		assertTrue("Expected label 'label1' not found", deploymentLabels.containsKey("label1"));
+		assertEquals("Invalid value for 'label1'", "value1", deploymentLabels.get("label1"));
+		assertTrue("Expected label 'label2' not found", deploymentLabels.containsKey("label2"));
+		assertEquals("Invalid value for 'label2'", "value2", deploymentLabels.get("label2"));
+	}
+
 	private Resource getResource() {
 		return new DockerResource("springcloud/spring-cloud-deployer-spi-test-app:latest");
 	}
 
 	private KubernetesDeployerProperties bindDeployerProperties() throws Exception {
-		YamlConfigurationFactory<KubernetesDeployerProperties> yamlConfigurationFactory = new YamlConfigurationFactory<>(
-			KubernetesDeployerProperties.class);
-		yamlConfigurationFactory.setResource(new ClassPathResource("dataflow-server.yml"));
-		yamlConfigurationFactory.afterPropertiesSet();
-		return yamlConfigurationFactory.getObject();
+		YamlPropertiesFactoryBean properties = new YamlPropertiesFactoryBean();
+		properties.setResources(new ClassPathResource("dataflow-server.yml"));
+		Properties yaml = properties.getObject();
+		MapConfigurationPropertySource source = new MapConfigurationPropertySource(yaml);
+		return new Binder(source).bind("", Bindable.of(KubernetesDeployerProperties.class)).get();
 	}
 }

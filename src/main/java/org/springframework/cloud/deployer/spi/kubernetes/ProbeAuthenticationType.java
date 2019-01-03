@@ -16,26 +16,12 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-
-import org.springframework.test.context.junit4.SpringRunner;
-
-import static org.junit.Assert.assertTrue;
-
 /**
- * Unit tests for {@link KubernetesHttpClient}.
+ * Defines supported authentication types to use when accessing secured
+ * probe endpoints.
  *
- * @author Ilayaperumal Gopinathan
+ * @author Chris Schaefer
  */
-@RunWith(SpringRunner.class)
-public class KubernetesHttpClientTests {
-
-	@Test
-	public void apiVersionTest() {
-		assertTrue(KubernetesHttpClient.getApiVersion("v1.9.0").equals("v1beta1"));
-		assertTrue(KubernetesHttpClient.getApiVersion("v1.9.0_gke01").equals("v1beta1"));
-		assertTrue(KubernetesHttpClient.getApiVersion("v1.10.0-beta1").equals("v1"));
-		assertTrue(KubernetesHttpClient.getApiVersion("v1.10.0beta2").equals("v1"));
-	}
+public enum ProbeAuthenticationType {
+	Basic
 }

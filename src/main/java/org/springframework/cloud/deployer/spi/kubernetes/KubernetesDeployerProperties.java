@@ -158,7 +158,7 @@ public class KubernetesDeployerProperties {
 	 * Path that app container has to respond to for liveness check.
 	 */
 	// See http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
-	private String livenessProbePath = "/health";
+	private String livenessProbePath;
 
 	/**
 	 * Port that app container has to respond on for liveness check.
@@ -189,12 +189,17 @@ public class KubernetesDeployerProperties {
 	 * Path that app container has to respond to for readiness check.
 	 */
 	// See http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
-	private String readinessProbePath = "/info";
+	private String readinessProbePath;
 
 	/**
 	 * Port that app container has to respond on for readiness check.
 	 */
 	private Integer readinessProbePort = null;
+
+	/**
+	 * The secret name containing the credentials to use when accessing secured probe endpoints.
+	 */
+	private String probeCredentialsSecret;
 
 	/**
 	 * Memory and CPU limits (i.e. maximum needed values) to allocate for a Pod.
@@ -296,6 +301,10 @@ public class KubernetesDeployerProperties {
 	 */
 	private boolean createJob = false;
 
+	/**
+	 * Service account name to use for app deployments
+	 */
+	private String deploymentServiceAccountName;
 
 	public String getNamespace() {
 		return namespace;
@@ -393,6 +402,14 @@ public class KubernetesDeployerProperties {
 		this.readinessProbePort = readinessProbePort;
 	}
 
+	public String getProbeCredentialsSecret() {
+		return probeCredentialsSecret;
+	}
+
+	public void setProbeCredentialsSecret(String probeCredentialsSecret) {
+		this.probeCredentialsSecret = probeCredentialsSecret;
+	}
+
 	public StatefulSet getStatefulSet() {
 		return statefulSet;
 	}
@@ -404,6 +421,8 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * @deprecated Use {@link #getLimits()}
+	 *
+	 * @return the memory limits to use
 	 */
 	@Deprecated
 	public String getMemory() {
@@ -412,6 +431,8 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * @deprecated Use {@link #setLimits(Resources)}
+	 *
+	 * @param memory the memory limit to set
 	 */
 	@Deprecated
 	public void setMemory(String memory) {
@@ -420,6 +441,8 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * @deprecated Use {@link #getLimits()}
+	 *
+	 * @return the CPU limits to use
 	 */
 	@Deprecated
 	public String getCpu() {
@@ -428,6 +451,8 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * @deprecated Use {@link #setLimits(Resources)}
+	 *
+	 * @param cpu the CPU limits to set
 	 */
 	@Deprecated
 	public void setCpu(String cpu) {
@@ -556,7 +581,7 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * @deprecated as of 1.3. This property is true by default and will not be an option in future releases.
-	 * @return
+	 * @return should a deployment be created
 	 */
 	@Deprecated
 	public boolean isCreateDeployment() {
@@ -565,7 +590,7 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * @deprecated as of 1.3.  This property is true by default and will not be an option in future releases.
-	 * @param createDeployment
+	 * @param createDeployment create a deployment or not
 	 */
 	@Deprecated
 	public void setCreateDeployment(boolean createDeployment) {
@@ -578,5 +603,13 @@ public class KubernetesDeployerProperties {
 
 	public void setCreateJob(boolean createJob) {
 		this.createJob = createJob;
+	}
+
+	public String getDeploymentServiceAccountName() {
+		return deploymentServiceAccountName;
+	}
+
+	public void setDeploymentServiceAccountName(String deploymentServiceAccountName) {
+		this.deploymentServiceAccountName = deploymentServiceAccountName;
 	}
 }

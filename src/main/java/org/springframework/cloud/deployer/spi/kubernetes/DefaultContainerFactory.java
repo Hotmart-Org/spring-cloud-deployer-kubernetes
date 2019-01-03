@@ -21,16 +21,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.api.model.EnvVar;
-import io.fabric8.kubernetes.api.model.HTTPGetActionBuilder;
 import io.fabric8.kubernetes.api.model.Probe;
-import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.springframework.boot.bind.YamlConfigurationFactory;
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.util.CommandLineTokenizer;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
@@ -38,9 +40,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -71,11 +76,24 @@ public class DefaultContainerFactory implements ContainerFactory {
 	@Deprecated
 	public Container create(String appId, AppDeploymentRequest request, Integer port, Integer instanceIndex,
 		boolean hostNetwork) {
-		return this.create(appId, request, port, hostNetwork);
+		ContainerConfiguration containerConfiguration = new ContainerConfiguration(appId, request)
+				.withHostNetwork(hostNetwork)
+				.withExternalPort(port);
+		return this.create(containerConfiguration);
 	}
 
 	@Override
+	@Deprecated
 	public Container create(String appId, AppDeploymentRequest request, Integer port, boolean hostNetwork) {
+		ContainerConfiguration containerConfiguration = new ContainerConfiguration(appId, request)
+				.withHostNetwork(hostNetwork)
+				.withExternalPort(port);
+		return this.create(containerConfiguration);
+	}
+
+	@Override
+	public Container create(ContainerConfiguration containerConfiguration) {
+		AppDeploymentRequest request = containerConfiguration.getAppDeploymentRequest();
 
 		String image;
 		try {
@@ -142,25 +160,25 @@ public class DefaultContainerFactory implements ContainerFactory {
 		}
 
 		ContainerBuilder container = new ContainerBuilder();
-		container.withName(appId).withImage(image).withEnv(envVars).withArgs(appArgs)
+		container.withName(containerConfiguration.getAppId()).withImage(image).withEnv(envVars).withArgs(appArgs)
 			.withVolumeMounts(getVolumeMounts(request));
 
-		if (port != null) {
-			if (hostNetwork) {
-				container.addNewPort().withContainerPort(port).withHostPort(port).endPort();
-			}
-			else {
-				container.addNewPort().withContainerPort(port).endPort();
-			}
+		Set<Integer> ports = new HashSet<>();
+
+		Integer defaultPort = containerConfiguration.getExternalPort();
+
+		if (defaultPort != null) {
+			ports.add(defaultPort);
 		}
 
-		List<Integer> additionalPorts = getContainerPorts(request);
+		ports.addAll(getContainerPorts(request));
 
-		createProbes(request, container, port, additionalPorts);
+		configureReadinessProbe(containerConfiguration, container, ports);
+		configureLivenessProbe(containerConfiguration, container, ports);
 
-		if (!additionalPorts.isEmpty()) {
-			for (Integer containerPort : additionalPorts) {
-				if (hostNetwork) {
+		if (!ports.isEmpty()) {
+			for (Integer containerPort : ports) {
+				if (containerConfiguration.isHostNetwork()) {
 					container.addNewPort().withContainerPort(containerPort).withHostPort(containerPort).endPort();
 				}
 				else {
@@ -178,8 +196,35 @@ public class DefaultContainerFactory implements ContainerFactory {
 		return container.build();
 	}
 
+	private void configureReadinessProbe(ContainerConfiguration containerConfiguration,
+						ContainerBuilder containerBuilder, Set<Integer> ports) {
+		Probe readinessProbe = new ReadinessProbeCreator(properties, containerConfiguration).create();
+
+		Integer readinessProbePort = readinessProbe.getHttpGet().getPort().getIntVal();
+
+		if (readinessProbePort != null) {
+			containerBuilder.withReadinessProbe(readinessProbe);
+			ports.add(readinessProbePort);
+		}
+	}
+
+	private void configureLivenessProbe(ContainerConfiguration containerConfiguration,
+						ContainerBuilder containerBuilder, Set<Integer> ports) {
+		Probe livenessProbe = new LivenessProbeCreator(properties, containerConfiguration).create();
+
+		Integer livenessProbePort = livenessProbe.getHttpGet().getPort().getIntVal();
+
+		if (livenessProbePort != null) {
+			containerBuilder.withLivenessProbe(livenessProbe);
+			ports.add(livenessProbePort);
+		}
+	}
+
 	/**
 	 * Create command arguments
+	 *
+	 * @param request the {@link AppDeploymentRequest}
+	 * @return the command line arguments to use
 	 */
 	protected List<String> createCommandArgs(AppDeploymentRequest request) {
 		List<String> cmdArgs = new LinkedList<>();
@@ -205,7 +250,7 @@ public class DefaultContainerFactory implements ContainerFactory {
 	 * Volume mounts can be specified as deployer properties as well as app deployment properties.
 	 * Deployment properties override deployer properties.
 	 *
-	 * @param request
+	 * @param request the {@link AppDeploymentRequest}
 	 * @return the configured volume mounts
 	 */
 	protected List<VolumeMount> getVolumeMounts(AppDeploymentRequest request) {
@@ -214,16 +259,18 @@ public class DefaultContainerFactory implements ContainerFactory {
 		String volumeMountDeploymentProperty = request.getDeploymentProperties()
 			.getOrDefault("spring.cloud.deployer.kubernetes.volumeMounts", "");
 		if (!StringUtils.isEmpty(volumeMountDeploymentProperty)) {
-			YamlConfigurationFactory<KubernetesDeployerProperties> volumeMountYamlConfigurationFactory = new YamlConfigurationFactory<>(
-				KubernetesDeployerProperties.class);
-			volumeMountYamlConfigurationFactory.setYaml("{ volumeMounts: " + volumeMountDeploymentProperty + " }");
 			try {
-				volumeMountYamlConfigurationFactory.afterPropertiesSet();
-				volumeMounts.addAll(volumeMountYamlConfigurationFactory.getObject().getVolumeMounts());
-			}
-			catch (Exception e) {
+				YamlPropertiesFactoryBean properties = new YamlPropertiesFactoryBean();
+				String tmpYaml = "{ volume-mounts: " + volumeMountDeploymentProperty + " }";
+				properties.setResources(new ByteArrayResource(tmpYaml.getBytes()));
+				Properties yaml = properties.getObject();
+				MapConfigurationPropertySource source = new MapConfigurationPropertySource(yaml);
+				KubernetesDeployerProperties deployerProperties = new Binder(source)
+						.bind("", Bindable.of(KubernetesDeployerProperties.class)).get();
+				volumeMounts.addAll(deployerProperties.getVolumeMounts());
+			} catch (Exception e) {
 				throw new IllegalArgumentException(
-					String.format("Invalid volume mount '%s'", volumeMountDeploymentProperty), e);
+						String.format("Invalid volume mount '%s'", volumeMountDeploymentProperty), e);
 			}
 		}
 		// only add volume mounts that have not already been added, based on the volume mount's name
@@ -321,104 +368,5 @@ public class DefaultContainerFactory implements ContainerFactory {
 			entryPointStyle = properties.getEntryPointStyle();
 		}
 		return entryPointStyle;
-	}
-
-	private void createProbes(AppDeploymentRequest request, ContainerBuilder container, Integer port,
-							  List<Integer> additionalPorts) {
-		Integer livenessPort = getProbePort(request, port, properties.getLivenessProbePort(), "liveness");
-		Integer readinessPort = getProbePort(request, port, properties.getReadinessProbePort(), "readiness");
-
-		if (livenessPort != null && !additionalPorts.contains(livenessPort) && !livenessPort.equals(port)) {
-			additionalPorts.add(livenessPort);
-		}
-
-		if (readinessPort != null && !additionalPorts.contains(readinessPort) && !readinessPort.equals(port)) {
-			additionalPorts.add(readinessPort);
-		}
-
-		if (readinessPort != null) {
-			container.withReadinessProbe(
-					new ProbeCreator(readinessPort, properties.getReadinessProbePath(), properties.getReadinessProbeTimeout(),
-							properties.getReadinessProbeDelay(), properties.getReadinessProbePeriod(), "readiness",
-							request.getDeploymentProperties()).create());
-		}
-
-		if (livenessPort != null) {
-			container.withLivenessProbe(
-					new ProbeCreator(livenessPort, properties.getLivenessProbePath(), properties.getLivenessProbeTimeout(),
-							properties.getLivenessProbeDelay(), properties.getLivenessProbePeriod(), "liveness",
-							request.getDeploymentProperties()).create());
-		}
-	}
-
-	private Integer getProbePort(AppDeploymentRequest request, Integer defaultPort, Integer propertiesProbePort, String prefix) {
-		Integer probePort = null;
-		String probeKey = "spring.cloud.deployer.kubernetes." + prefix + "ProbePort";
-
-		if (request.getDeploymentProperties().containsKey(probeKey)) {
-			probePort = Integer.parseInt(request.getDeploymentProperties().get(probeKey));
-		}
-		else if (propertiesProbePort != null) {
-			probePort = propertiesProbePort;
-		}
-		else if (defaultPort != null) {
-			probePort = defaultPort;
-		}
-
-		return probePort;
-	}
-
-	/**
-	 * Create a readiness/liveness probe overriding any value that is provided as a deployment property.
-	 */
-	private static class ProbeCreator {
-
-		static final String KUBERNETES_DEPLOYER_PREFIX = "spring.cloud.deployer.kubernetes";
-
-		Integer externalPort;
-		String endpoint;
-		int timeout;
-		int initialDelay;
-		int period;
-
-		ProbeCreator(Integer externalPort, String endpoint, int timeout, int initialDelay, int period, String prefix,
-			Map<String, String> deployProperties) {
-			this.externalPort = externalPort;
-			if (deployProperties.containsKey(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbePath")) {
-				this.endpoint = String
-					.valueOf(deployProperties.get(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbePath").trim());
-			}
-			else {
-				this.endpoint = endpoint;
-			}
-			if (deployProperties.containsKey(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbeTimeout")) {
-				this.timeout = Integer
-					.valueOf(deployProperties.get(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbeTimeout").trim());
-			}
-			else {
-				this.timeout = timeout;
-			}
-			if (deployProperties.containsKey(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbeDelay")) {
-				this.initialDelay = Integer
-					.valueOf(deployProperties.get(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbeDelay").trim());
-			}
-			else {
-				this.initialDelay = initialDelay;
-			}
-			if (deployProperties.containsKey(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbePeriod")) {
-				this.period = Integer
-					.valueOf(deployProperties.get(KUBERNETES_DEPLOYER_PREFIX + "." + prefix + "ProbePeriod").trim());
-			}
-			else {
-				this.period = period;
-			}
-		}
-
-		Probe create() {
-			return new ProbeBuilder()
-				.withHttpGet(new HTTPGetActionBuilder().withPath(endpoint).withNewPort(externalPort).build())
-				.withTimeoutSeconds(timeout).withInitialDelaySeconds(initialDelay).withPeriodSeconds(period).build();
-
-		}
 	}
 }

@@ -25,19 +25,24 @@ import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.PodSpecBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.springframework.boot.bind.YamlConfigurationFactory;
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.app.AppStatus;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.core.RuntimeEnvironmentInfo;
 import org.springframework.cloud.deployer.spi.util.ByteSizeUtils;
 import org.springframework.cloud.deployer.spi.util.RuntimeVersionUtils;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
@@ -45,6 +50,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.stream.Collectors;
 
 /**
@@ -76,6 +82,8 @@ public class AbstractKubernetesDeployer {
 	/**
 	 * Create the RuntimeEnvironmentInfo.
 	 *
+	 * @param spiClass the SPI interface class
+	 * @param implementationClass the SPI implementation class
 	 * @return the Kubernetes runtime environment info
 	 */
 	protected RuntimeEnvironmentInfo createRuntimeEnvironmentInfo(Class spiClass, Class implementationClass) {
@@ -95,6 +103,10 @@ public class AbstractKubernetesDeployer {
 	/**
 	 * Creates a map of labels for a given ID. This will allow Kubernetes services
 	 * to "select" the right ReplicationControllers.
+	 *
+	 * @param appId the application id
+	 * @param request The {@link AppDeploymentRequest}
+	 * @return the built id map of labels
 	 */
 	protected Map<String, String> createIdMap(String appId, AppDeploymentRequest request) {
 		//TODO: handling of app and group ids
@@ -147,7 +159,13 @@ public class AbstractKubernetesDeployer {
 		}
 
 		boolean hostNetwork = getHostNetwork(request);
-		Container container = containerFactory.create(appId, request, port, hostNetwork);
+
+		ContainerConfiguration containerConfiguration = new ContainerConfiguration(appId, request)
+				.withProbeCredentialsSecret(getProbeCredentialsSecret(request))
+				.withExternalPort(port)
+				.withHostNetwork(hostNetwork);
+
+		Container container = containerFactory.create(containerConfiguration);
 
 		// add memory and cpu resource limits
 		ResourceRequirements req = new ResourceRequirements();
@@ -177,6 +195,12 @@ public class AbstractKubernetesDeployer {
 			podSpec.withRestartPolicy("Never");
 		}
 
+		String deploymentServiceAcccountName = getDeploymentServiceAccountName(request);
+
+		if (deploymentServiceAcccountName != null) {
+			podSpec.withServiceAccountName(deploymentServiceAcccountName);
+		}
+
 		return podSpec.build();
 	}
 
@@ -192,7 +216,7 @@ public class AbstractKubernetesDeployer {
 	 * Volumes can be specified as deployer properties as well as app deployment properties.
 	 * Deployment properties override deployer properties.
 	 *
-	 * @param request
+	 * @param request the {@link AppDeploymentRequest}
 	 * @return the configured volumes
 	 */
 	protected List<Volume> getVolumes(AppDeploymentRequest request) {
@@ -201,15 +225,16 @@ public class AbstractKubernetesDeployer {
 		String volumeDeploymentProperty = request.getDeploymentProperties()
 				.getOrDefault("spring.cloud.deployer.kubernetes.volumes", "");
 		if (!StringUtils.isEmpty(volumeDeploymentProperty)) {
-			YamlConfigurationFactory<KubernetesDeployerProperties> volumeYamlConfigurationFactory =
-					new YamlConfigurationFactory<>(KubernetesDeployerProperties.class);
-			volumeYamlConfigurationFactory.setYaml("{ volumes: " + volumeDeploymentProperty + " }");
 			try {
-				volumeYamlConfigurationFactory.afterPropertiesSet();
-				volumes.addAll(
-						volumeYamlConfigurationFactory.getObject().getVolumes());
-			}
-			catch (Exception e) {
+				YamlPropertiesFactoryBean properties = new YamlPropertiesFactoryBean();
+				String tmpYaml = "{ volumes: " + volumeDeploymentProperty + " }";
+				properties.setResources(new ByteArrayResource(tmpYaml.getBytes()));
+				Properties yaml = properties.getObject();
+				MapConfigurationPropertySource source = new MapConfigurationPropertySource(yaml);
+				KubernetesDeployerProperties deployerProperties = new Binder(source)
+						.bind("", Bindable.of(KubernetesDeployerProperties.class)).get();
+				volumes.addAll(deployerProperties.getVolumes());
+			} catch (Exception e) {
 				throw new IllegalArgumentException(
 						String.format("Invalid volume '%s'", volumeDeploymentProperty), e);
 			}
@@ -232,7 +257,8 @@ public class AbstractKubernetesDeployer {
 	 * <p>
 	 * Also supports the deprecated properties {@code spring.cloud.deployer.kubernetes.memory/cpu}.
 	 *
-	 * @param request    The deployment properties.
+	 * @param request The deployment properties.
+	 * @return the resource limits to use
 	 */
 	protected Map<String, Quantity> deduceResourceLimits(AppDeploymentRequest request) {
 		String memDeployer = getCommonDeployerMemory(request);
@@ -310,8 +336,8 @@ public class AbstractKubernetesDeployer {
 		} else {
 			pullPolicy = ImagePullPolicy.relaxedValueOf(pullPolicyOverride);
 			if (pullPolicy == null) {
-				logger.warn("Parsing of pull policy " + pullPolicyOverride + " failed, using default \"Always\".");
-				pullPolicy = ImagePullPolicy.Always;
+				logger.warn("Parsing of pull policy " + pullPolicyOverride + " failed, using default \"IfNotPresent\".");
+				pullPolicy = ImagePullPolicy.IfNotPresent;
 			}
 		}
 		logger.debug("Using imagePullPolicy " + pullPolicy);
@@ -323,7 +349,8 @@ public class AbstractKubernetesDeployer {
 	 * runtime.
 	 * Falls back to the server properties if not present in the deployment request.
 	 *
-	 * @param request    The deployment properties.
+	 * @param request The deployment properties.
+	 * @return the resource requests to use
 	 */
 	protected Map<String, Quantity> deduceResourceRequests(AppDeploymentRequest request) {
 		String memOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.requests.memory");
@@ -427,5 +454,28 @@ public class AbstractKubernetesDeployer {
 		}
 
 		return imagePullSecret;
+	}
+
+	private String getDeploymentServiceAccountName(AppDeploymentRequest request) {
+		String deploymentServiceAccountName =
+				request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.deploymentServiceAccountName");
+
+		if (StringUtils.isEmpty(deploymentServiceAccountName)) {
+			deploymentServiceAccountName = properties.getDeploymentServiceAccountName();
+		}
+
+		return deploymentServiceAccountName;
+	}
+
+	private Secret getProbeCredentialsSecret(AppDeploymentRequest request) {
+		Secret secret = null;
+		String probeCredentialsSecret = "spring.cloud.deployer.kubernetes.probeCredentialsSecret";
+
+		if (request.getDeploymentProperties().containsKey(probeCredentialsSecret)) {
+			String secretName = request.getDeploymentProperties().get(probeCredentialsSecret);
+			secret = client.secrets().withName(secretName).get();
+		}
+
+		return secret;
 	}
 }
