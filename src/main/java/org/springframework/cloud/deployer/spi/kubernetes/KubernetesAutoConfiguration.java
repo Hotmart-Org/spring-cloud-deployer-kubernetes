@@ -16,6 +16,7 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
+import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +28,7 @@ import org.springframework.cloud.deployer.spi.task.TaskLauncher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
 
 /**
  * Spring Bean configuration for the {@link KubernetesAppDeployer}.
@@ -59,8 +61,29 @@ public class KubernetesAutoConfiguration {
 	}
 
 	@Bean
-	public KubernetesClient kubernetesClient() {
-		return KubernetesClientFactory.getKubernetesClient(this.properties);
+	public KubernetesClient kubernetesClient(Environment environment) {
+		if(environment.getProperty(Config.KUBERNETES_MASTER_SYSTEM_PROPERTY) != null) {
+			System.setProperty(Config.KUBERNETES_MASTER_SYSTEM_PROPERTY,
+					environment.getProperty(Config.KUBERNETES_MASTER_SYSTEM_PROPERTY));
+		}
+
+		if(environment.getProperty(Config.KUBERNETES_AUTH_BASIC_USERNAME_SYSTEM_PROPERTY) != null) {
+			System.setProperty(Config.KUBERNETES_AUTH_BASIC_USERNAME_SYSTEM_PROPERTY,
+					environment.getProperty(Config.KUBERNETES_AUTH_BASIC_USERNAME_SYSTEM_PROPERTY));
+		}
+
+		if(environment.getProperty(Config.KUBERNETES_AUTH_BASIC_PASSWORD_SYSTEM_PROPERTY) != null) {
+			System.setProperty(Config.KUBERNETES_AUTH_BASIC_PASSWORD_SYSTEM_PROPERTY,
+					environment.getProperty(Config.KUBERNETES_AUTH_BASIC_PASSWORD_SYSTEM_PROPERTY));
+		}
+
+
+		if(environment.getProperty(Config.KUBERNETES_OAUTH_TOKEN_SYSTEM_PROPERTY) != null) {
+			System.setProperty(Config.KUBERNETES_OAUTH_TOKEN_SYSTEM_PROPERTY,
+					environment.getProperty(Config.KUBERNETES_OAUTH_TOKEN_SYSTEM_PROPERTY));
+		}
+
+        return KubernetesClientFactory.getKubernetesClient(this.properties);
 	}
 
 	@Bean
