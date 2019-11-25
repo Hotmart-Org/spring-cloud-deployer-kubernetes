@@ -114,7 +114,8 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 	protected Map<String, String> createIdMap(String appId, AppDeploymentRequest request) {
 		Map<String, String> idMap = super.createIdMap(appId, request);
 		
-		idMap.put("data.kubernetes.labels.app_kubernetes_io/instance", "transcoder");
+		idMap.put("app.kubernetes.io/instance", appId);
+		idMap.put("app.kubernetes.io/name", "application");
 		
 		return idMap;
 	}
