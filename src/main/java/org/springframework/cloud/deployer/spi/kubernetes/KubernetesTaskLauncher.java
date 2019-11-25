@@ -111,6 +111,15 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 	}
 
 	@Override
+	protected Map<String, String> createIdMap(String appId, AppDeploymentRequest request) {
+		Map<String, String> idMap = super.createIdMap(appId, request);
+		
+		idMap.put("data.kubernetes.labels.app_kubernetes_io/instance", "transcoder");
+		
+		return idMap;
+	}
+	
+	@Override
 	public void cancel(String id) {
 		logger.debug(String.format("Cancelling task: %s", id));
 		//ToDo: what does cancel mean? Kubernetes doesn't have stop - just cleanup
