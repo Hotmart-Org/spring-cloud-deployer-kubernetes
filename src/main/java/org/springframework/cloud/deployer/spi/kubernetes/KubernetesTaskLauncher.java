@@ -91,7 +91,9 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 			Map<String, String> podLabelMap = new HashMap<>();
 			podLabelMap.put("task-name", request.getDefinition().getName());
 			podLabelMap.put(SPRING_MARKER_KEY, SPRING_MARKER_VALUE);
-			podLabelMap.put("app.kubernetes.io/instance", "transcoder-master");
+			
+			
+			podLabelMap.put("app.kubernetes.io/instance", request.getDeploymentProperties().get("facility"));
 			podLabelMap.put("app.kubernetes.io/name", "application");
 
 			PodSpec podSpec = createPodSpec(appId, request, null, true);
