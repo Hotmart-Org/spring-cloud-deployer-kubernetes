@@ -88,6 +88,7 @@ public class KubernetesAutoConfiguration {
 	}
 
 	@Bean
+	@ConditionalOnMissingBean(ContainerFactory.class)
 	public ContainerFactory containerFactory() {
 		return new DefaultContainerFactory(properties);
 	}
