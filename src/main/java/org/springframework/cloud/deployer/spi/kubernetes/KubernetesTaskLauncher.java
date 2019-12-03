@@ -181,9 +181,14 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 
 	private void launchJob(String appId, PodSpec podSpec, Map<String, String> podLabelMap, Map<String, String> idMap,
 						   Map<String, String> annotations) {
-		ObjectMeta objectMeta = new ObjectMetaBuilder().withLabels(podLabelMap).addToLabels(idMap).build();
+		ObjectMeta objectMeta = new ObjectMetaBuilder()
+				.withAnnotations(annotations)
+				.withLabels(podLabelMap)
+				.addToLabels(idMap)
+			.build();
+		
 		PodTemplateSpec podTemplateSpec = new PodTemplateSpec(objectMeta, podSpec);
-
+		
 		JobSpec jobSpec = new JobSpecBuilder()
 				.withTemplate(podTemplateSpec)
 				.build();
