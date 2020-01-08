@@ -103,6 +103,10 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 			podLabelMap.put("task-name", request.getDefinition().getName());
 			podLabelMap.put(SPRING_MARKER_KEY, SPRING_MARKER_VALUE);
 
+			
+			podLabelMap.put("app.kubernetes.io/instance", request.getDeploymentProperties().get("facility"));
+			podLabelMap.put("app.kubernetes.io/name", "application");
+
 			PodSpec podSpec = createPodSpec(appId, request, null, true);
 
 			Map<String, String> jobAnnotations = getJobAnnotations(request);
@@ -213,7 +217,7 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 	protected String createDeploymentId(AppDeploymentRequest request) {
 		String name = request.getDefinition().getName();
 		Hashids hashids = new Hashids(name, 0, "abcdefghijklmnopqrstuvwxyz1234567890");
-		String hashid = hashids.encode(System.currentTimeMillis());
+		String hashid = hashids.encode(System.nanoTime());
 		String deploymentId = name + "-" + hashid;
 		// Kubernetes does not allow . in the name and does not allow uppercase in the name
 		return deploymentId.replace('.', '-').toLowerCase();
@@ -236,7 +240,12 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 
 	private void launchJob(String appId, PodSpec podSpec, Map<String, String> podLabelMap, Map<String, String> idMap,
 						   Map<String, String> annotations) {
-		ObjectMeta objectMeta = new ObjectMetaBuilder().withLabels(podLabelMap).addToLabels(idMap).build();
+		ObjectMeta objectMeta = new ObjectMetaBuilder()
+				.withAnnotations(annotations)
+				.withLabels(podLabelMap)
+				.addToLabels(idMap)
+			.build();
+		
 		PodTemplateSpec podTemplateSpec = new PodTemplateSpec(objectMeta, podSpec);
 
 		JobSpec jobSpec = new JobSpecBuilder()
