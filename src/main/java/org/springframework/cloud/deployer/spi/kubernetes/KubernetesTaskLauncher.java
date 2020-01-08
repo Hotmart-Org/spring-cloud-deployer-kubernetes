@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.fabric8.kubernetes.api.model.ObjectMeta;
@@ -217,7 +218,7 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 	protected String createDeploymentId(AppDeploymentRequest request) {
 		String name = request.getDefinition().getName();
 		Hashids hashids = new Hashids(name, 0, "abcdefghijklmnopqrstuvwxyz1234567890");
-		String hashid = hashids.encode(System.nanoTime());
+		String hashid = hashids.encode(new Random().nextInt(Integer.MAX_VALUE));
 		String deploymentId = name + "-" + hashid;
 		// Kubernetes does not allow . in the name and does not allow uppercase in the name
 		return deploymentId.replace('.', '-').toLowerCase();
