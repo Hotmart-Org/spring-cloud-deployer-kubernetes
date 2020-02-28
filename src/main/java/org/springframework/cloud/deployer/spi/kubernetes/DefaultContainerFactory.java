@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.EnvVarSourceBuilder;
+import io.fabric8.kubernetes.api.model.ObjectFieldSelectorBuilder;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import org.apache.commons.logging.Log;
@@ -153,7 +155,14 @@ public class DefaultContainerFactory implements ContainerFactory {
 			envVars.add(new EnvVar("SPRING_CLOUD_APPLICATION_GROUP",
 				request.getDeploymentProperties().get(AppDeployer.GROUP_PROPERTY_KEY), null));
 		}
-
+		
+		String addPodIP = containerConfiguration.getAppDeploymentRequest().getDeploymentProperties().get("spring.cloud.deployer.kubernetes.add-pod-ip");
+		if(addPodIP != null) {
+			envVars.add(new EnvVar(addPodIP, null, new EnvVarSourceBuilder()
+				.withFieldRef(new ObjectFieldSelectorBuilder().withFieldPath("status.podIP").build())
+			.build()));
+		}
+		
 		ContainerBuilder container = new ContainerBuilder();
 		container.withName(containerConfiguration.getAppId()).withImage(image).withEnv(envVars).withArgs(appArgs)
 			.withVolumeMounts(getVolumeMounts(request));
