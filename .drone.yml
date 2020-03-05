@@ -19,11 +19,11 @@ steps:
 - name: restore-cache
     image: meltwater/drone-cache:dev
     settings:
-    bucket: player-drone-cache
-    mount:
-    - .m2
-    region: us-east-1
-    restore: true
+        bucket: player-drone-cache
+        mount:
+        - .m2
+        region: us-east-1
+        restore: true
 
 - name: build-maven
     pull: always
