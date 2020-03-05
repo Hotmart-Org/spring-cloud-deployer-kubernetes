@@ -1,12 +1,12 @@
 ---
 fbm: &filter_branch
     when:
-    branch:
-    - v1.3.9.RELEASE-HOTMART
-    - v2.1.1.RELEASE-HOTMART
-    event:
-        exclude:
-        - pull_request
+        branch:
+        - v1.3.9.RELEASE-HOTMART
+        - v2.1.1.RELEASE-HOTMART
+        event:
+            exclude:
+            - pull_request
 
 kind: pipeline
 name: default
