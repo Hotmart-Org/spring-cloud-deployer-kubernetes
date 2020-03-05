@@ -1,12 +1,12 @@
 ---
 fbm: &filter_branch
-    when:
+  when:
     branch:
     - v1.3.9.RELEASE-HOTMART
     - v2.1.1.RELEASE-HOTMART
     event:
-        exclude:
-        - pull_request
+      exclude:
+      - pull_request
 
 kind: pipeline
 name: default
@@ -19,11 +19,11 @@ steps:
 - name: restore-cache
   image: meltwater/drone-cache:dev
   settings:
-  bucket: player-drone-cache
-  mount:
-  - .m2
-  region: us-east-1
-  restore: true
+    bucket: player-drone-cache
+    mount:
+    - .m2
+    region: us-east-1
+    restore: true
 
 - name: build-maven
   pull: always
@@ -31,7 +31,7 @@ steps:
   command:
   - mvn clean source:jar package dependency:resolve-plugins
   environment:
-  MAVEN_SETTINGS:
+    MAVEN_SETTINGS:
       from_secret: maven_settings
   depends_on:
   - restore-cache
@@ -39,24 +39,24 @@ steps:
 - name: rebuild-cache
   image: meltwater/drone-cache:dev
   settings:
-  bucket: player-drone-cache
-  mount:
-  - .m2
-  rebuild: true
-  region: us-east-1
+    bucket: player-drone-cache
+    mount:
+    - .m2
+    rebuild: true
+    region: us-east-1
   depends_on:
   - build-maven
 
 - name: artifactory
   image: athieriot/drone-artifactory 
   settings:
-  url: https://mvnrepository.vulcano.rocks
-  username: drone
-  pom: pom.xml
-  force_upload: true
-  files:
-  - target/*.jar
-  - pom.xml
+    url: https://mvnrepository.vulcano.rocks
+    username: drone
+    pom: pom.xml
+    force_upload: true
+    files:
+    - target/*.jar
+    - pom.xml
   environment:
     ARTIFACTORY_PASSWORD:
       from_secret: artifactory_password
