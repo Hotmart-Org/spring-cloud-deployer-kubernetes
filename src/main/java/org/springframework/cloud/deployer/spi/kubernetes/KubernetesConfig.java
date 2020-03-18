@@ -5,6 +5,9 @@ public class KubernetesConfig {
 	private String masterUrl;
 	private String oauthToken;
 
+	public KubernetesConfig() {
+	}
+
 	public KubernetesConfig(String masterUrl, String oauthToken) {
 		this.masterUrl = masterUrl;
 		this.oauthToken = oauthToken;
