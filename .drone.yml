@@ -17,13 +17,13 @@ platform:
 
 steps:
 - name: restore-cache
-  image: meltwater/drone-cache:dev
+  image: meltwater/drone-cache:1.0.4
   settings:
-  bucket: player-drone-cache
-  mount:
-  - .m2
-  region: us-east-1
-  restore: true
+    bucket: player-drone-cache
+    mount:
+    - .m2
+    region: us-east-1
+    restore: true
 
 - name: build-maven
   pull: always
@@ -37,7 +37,7 @@ steps:
   - restore-cache
 
 - name: rebuild-cache
-  image: meltwater/drone-cache:dev
+  image: meltwater/drone-cache:1.0.4
   settings:
     bucket: player-drone-cache
     mount:
@@ -52,11 +52,11 @@ steps:
   settings:
     url: https://mvnrepository.vulcano.rocks
     username: drone
-    pom: pom.xml
+    pom: spring-cloud-task-batch/pom.xml
     force_upload: true
     files:
-    - target/*.jar
-    - pom.xml
+    - spring-cloud-task-batch/target/*.jar
+    - spring-cloud-task-batch/pom.xml
   environment:
     ARTIFACTORY_PASSWORD:
       from_secret: artifactory_password
