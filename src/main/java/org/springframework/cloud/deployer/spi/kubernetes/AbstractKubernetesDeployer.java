@@ -146,6 +146,12 @@ public class AbstractKubernetesDeployer {
 		if (imagePullSecret != null) {
 			podSpec.addNewImagePullSecret(imagePullSecret);
 		}
+		
+		String activeDeadlineSeconds = request.getDeploymentProperties().get("activeDeadlineSeconds");
+		
+		if (activeDeadlineSeconds != null) {
+			podSpec.withActiveDeadlineSeconds(Long.parseLong(activeDeadlineSeconds));
+		}
 
 		boolean hostNetwork = getHostNetwork(request);
 
