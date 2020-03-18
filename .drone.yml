@@ -52,11 +52,11 @@ steps:
   settings:
     url: https://mvnrepository.vulcano.rocks
     username: drone
-    pom: spring-cloud-task-batch/pom.xml
+    pom: pom.xml
     force_upload: true
     files:
-    - spring-cloud-task-batch/target/*.jar
-    - spring-cloud-task-batch/pom.xml
+    - target/*.jar
+    - pom.xml
   environment:
     ARTIFACTORY_PASSWORD:
       from_secret: artifactory_password
