@@ -53,7 +53,7 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 
 	@Override
 	public String launch(AppDeploymentRequest request) {
-		KubernetesTaskLauncher taskLauncher = getTaskLauncher();
+		KubernetesTaskLauncher taskLauncher = getTaskLauncher(request.getDeploymentProperties().get("com.hotmart.transcoder.config-name"));
 
 		Map<String, String> deploymentProperties = new HashMap<String, String>(request.getDeploymentProperties());
 		
@@ -100,8 +100,8 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 		throw new IllegalStateException("Not implemented");
 	}
 
-	private KubernetesTaskLauncher getTaskLauncher() {
-		KubernetesConfig kubernetesConfig = kubernetesConfigProvider.next();
+	private KubernetesTaskLauncher getTaskLauncher(String configName) {
+		KubernetesConfig kubernetesConfig = kubernetesConfigProvider.next(configName);
 		
 		logger.info("Using config " + kubernetesConfig.getMasterUrl());
 
