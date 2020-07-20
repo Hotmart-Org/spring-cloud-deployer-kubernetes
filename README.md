@@ -3,12 +3,14 @@ A [Spring Cloud Deployer](https://github.com/spring-cloud/spring-cloud-deployer)
 
 ## Kubernetes Compatibility
 
-| Deployer \ Kubernetes | 1.4 | 1.5 | 1.6 | 1.7 | 1.8 | 1.9 | 1.10
-|-----------------------|-----|-----|-----|-----|-----|-----|-----|
-| **1.1**               | ✓   | ?   | ✕   | ✕   | ✕   | ✕   | ✕   |
-| **1.2**               | ✓   | ✓   | ?   | ?   | ?   | ✕   | ✕   |
-| **1.3**               | ✕   | ✕   | ✓   | ✓   | ✓   | ✓   | ✓   |
-| **HEAD**              | ✕   | ✕   | ✓   | ✓   | ✓   | ✓   | ✓   |
+| Deployer \ Kubernetes | 1.11 | 1.12 | 1.13 | 1.14 | 1.15 | 1.16 | 1.17 |
+|-----------------------|------|------|------|------|------|------|------|
+| **1.3.x**             | ✓    | ✓    | ✓    | ✕    | ✕    | ✕    | ✕    |
+| **2.0.x**             | ✓    | ✓    | ✓    | ✕    | ✕    | ✕    | ✕    |
+| **2.1.x**             | ✓    | ✓    | ✓    | ✕    | ✕    | ✕    | ✕    |
+| **2.2.x**             | ✕    | ✕    | ✓    | ✓    | ✓    | ✕    | ✕    |
+| **2.3.x**             | ✕    | ✕    | ✓    | ✓    | ✓    | ✓    | ✓    |
+| **MASTER**            | ✕    | ✕    | ✕    | ✕    | ✕    | ✓    | ✓    |
 
 - `✓` Fully supported version.
 - `?` Due to breaking changes between Kubernetes API versions, some features might not work _(e.g., ABAC vs RBAC)_. Also, we haven't thoroughly tested against this version.

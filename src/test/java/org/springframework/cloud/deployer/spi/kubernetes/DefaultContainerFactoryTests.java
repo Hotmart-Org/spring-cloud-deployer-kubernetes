@@ -1,11 +1,11 @@
 /*
- * Copyright 2016-2018 the original author or authors.
+ * Copyright 2016-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,21 +16,6 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Container;
@@ -40,9 +25,18 @@ import io.fabric8.kubernetes.api.model.HTTPHeader;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.VolumeMount;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.deployer.resource.docker.DockerResource;
 import org.springframework.cloud.deployer.spi.core.AppDefinition;
@@ -50,12 +44,20 @@ import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.core.io.Resource;
 import org.springframework.test.context.junit4.SpringRunner;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 /**
  * Unit tests for {@link DefaultContainerFactory}.
  *
  * @author Will Kennedy
  * @author Donovan Muller
  * @author Chris Schaefer
+ * @author David Turanski
+ * @author Ilayaperumal Gopinathan
  */
 @RunWith(SpringRunner.class)
 @SpringBootTest(classes = { KubernetesAutoConfiguration.class })
@@ -70,8 +72,8 @@ public class DefaultContainerFactoryTests {
 		AppDefinition definition = new AppDefinition("app-test", null);
 		Resource resource = getResource();
 		Map<String, String> props = new HashMap<>();
-		props.put("spring.cloud.deployer.kubernetes.memory", "128Mi");
-		props.put("spring.cloud.deployer.kubernetes.environmentVariables",
+		props.put("spring.cloud.deployer.kubernetes.limits.memory", "128Mi");
+		props.put("spring.cloud.deployer.kubernetes.environment-variables",
 				"JAVA_OPTIONS=-Xmx64m,KUBERNETES_NAMESPACE=test-space");
 		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
 				resource, props);
@@ -203,6 +205,26 @@ public class DefaultContainerFactoryTests {
 		assertTrue(containerShell.getEnv().get(0).getName().equals("FOO_BAR_BAZ"));
 		assertTrue(containerShell.getArgs().size() == 0);
 
+		List<String> cmdLineArgs = new ArrayList<>();
+		cmdLineArgs.add("--foo.bar=value1");
+		cmdLineArgs.add("--spring.cloud.task.executionid=1");
+		cmdLineArgs.add("--spring.cloud.data.flow.platformname=platform1");
+		cmdLineArgs.add("--spring.cloud.data.flow.taskappname==a1");
+		appDeploymentRequestShell = new AppDeploymentRequest(definition,
+				resource, props, cmdLineArgs);
+		shellContainerConfiguration = new ContainerConfiguration("app-test",
+				appDeploymentRequestShell);
+		containerShell = defaultContainerFactory.create(shellContainerConfiguration);
+		assertNotNull(containerShell);
+		assertTrue(containerShell.getEnv().size() == 6);
+		assertTrue(containerShell.getArgs().size() == 0);
+		String envVarString = containerShell.getEnv().toString();
+		assertTrue(envVarString.contains("name=FOO_BAR_BAZ, value=test"));
+		assertTrue(envVarString.contains("name=FOO_BAR, value=value1"));
+		assertTrue(envVarString.contains("name=SPRING_CLOUD_TASK_EXECUTIONID, value=1"));
+		assertTrue(envVarString.contains("name=SPRING_CLOUD_DATA_FLOW_TASKAPPNAME, value==a1"));
+		assertTrue(envVarString.contains("name=SPRING_CLOUD_DATA_FLOW_PLATFORMNAME, value=platform1"));
+
 		props.put("spring.cloud.deployer.kubernetes.entryPointStyle", "exec");
 		AppDeploymentRequest appDeploymentRequestExec = new AppDeploymentRequest(definition,
 				resource, props);
@@ -248,17 +270,17 @@ public class DefaultContainerFactoryTests {
 		Container container = defaultContainerFactory.create(containerConfiguration);
 
 		assertThat(container.getVolumeMounts()).containsOnly(
-				new VolumeMount("/test/hostPath", null, "testhostpath", null, null),
-				new VolumeMount("/test/pvc", null, "testpvc", true, null),
-				new VolumeMount("/test/nfs", null, "testnfs", null, null));
+				new VolumeMount("/test/hostPath", null, "testhostpath", null, null, null),
+				new VolumeMount("/test/pvc", null, "testpvc", true, null, null),
+				new VolumeMount("/test/nfs", null, "testnfs", null, null, null));
 
 		// test volume mounts defined as app deployment property, overriding the deployer property
 		kubernetesDeployerProperties = new KubernetesDeployerProperties();
 		kubernetesDeployerProperties
 				.setVolumeMounts(Stream.of(
-						new VolumeMount("/test/hostPath", null, "testhostpath", false, null),
-						new VolumeMount("/test/pvc", null, "testpvc", true, null),
-						new VolumeMount("/test/nfs", null, "testnfs", false, null))
+						new VolumeMount("/test/hostPath", null, "testhostpath", false, null, null),
+						new VolumeMount("/test/pvc", null, "testpvc", true, null, null),
+						new VolumeMount("/test/nfs", null, "testnfs", false, null, null))
 				.collect(Collectors.toList()));
 		defaultContainerFactory = new DefaultContainerFactory(kubernetesDeployerProperties);
 
@@ -273,9 +295,9 @@ public class DefaultContainerFactoryTests {
 		container = defaultContainerFactory.create(containerConfiguration);
 
 		assertThat(container.getVolumeMounts()).containsOnly(
-				new VolumeMount("/test/hostPath", null, "testhostpath", false, null),
-				new VolumeMount("/test/pvc/overridden", null, "testpvc", null, null),
-				new VolumeMount("/test/nfs/overridden", null, "testnfs", true, null));
+				new VolumeMount("/test/hostPath", null, "testhostpath", false, null, null),
+				new VolumeMount("/test/pvc/overridden", null, "testpvc", null, null, null),
+				new VolumeMount("/test/nfs/overridden", null, "testnfs", true, null, null));
 	}
 
 	@Test
@@ -323,7 +345,7 @@ public class DefaultContainerFactoryTests {
 		AppDefinition definition = new AppDefinition("app-test", null);
 		Resource resource = getResource();
 		Map<String, String> props = new HashMap<>();
-		props.put("spring.cloud.deployer.kubernetes.livenessProbePort", Integer.toString(livenessPort));
+		props.put("spring.cloud.deployer.kubernetes.liveness-probe-port", Integer.toString(livenessPort));
 		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition,
 				resource, props);
 
@@ -473,7 +495,7 @@ public class DefaultContainerFactoryTests {
 				kubernetesDeployerProperties);
 
 		Map<String,String> appProperties = new HashMap<>();
-		appProperties.put("spring.cloud.deployer.kubernetes.bootMajorVersion", "1");
+		appProperties.put("spring.cloud.deployer.kubernetes.boot-major-version", "1");
 
 		AppDefinition definition = new AppDefinition("app-test", appProperties);
 		Resource resource = getResource();
@@ -624,6 +646,32 @@ public class DefaultContainerFactoryTests {
 				container.getLivenessProbe().getHttpGet().getHttpHeaders().isEmpty());
 		assertTrue("Readiness probe should not contain any HTTP headers",
 				container.getReadinessProbe().getHttpGet().getHttpHeaders().isEmpty());
+	}
+
+	@Test
+	public void testCommandLineArgsOverridesExistingProperties() {
+		AppDefinition definition = new AppDefinition("app-test", Collections.singletonMap("foo", "bar"));
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource(), null,
+				Collections.singletonList("--foo=newValue"));
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+		assertThat(defaultContainerFactory.createCommandArgs(appDeploymentRequest)).containsExactly("--foo=newValue");
+	}
+
+	@Test
+	public void testCommandLineArgsExcludesMalformedProperties() {
+		Map<String,String> properties = new HashMap<>();
+		properties.put("sun.cpu.isalist","");
+		properties.put("foo","bar");
+		AppDefinition definition = new AppDefinition("app-test", properties);
+		AppDeploymentRequest appDeploymentRequest = new AppDeploymentRequest(definition, getResource());
+
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		DefaultContainerFactory defaultContainerFactory = new DefaultContainerFactory(
+				kubernetesDeployerProperties);
+		assertThat(defaultContainerFactory.createCommandArgs(appDeploymentRequest)).containsExactly("--foo=bar");
 	}
 
 	private Resource getResource() {

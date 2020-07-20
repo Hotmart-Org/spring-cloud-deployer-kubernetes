@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-2018 the original author or authors.
+ * Copyright 2015-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,11 +19,17 @@ package org.springframework.cloud.deployer.spi.kubernetes;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.fabric8.kubernetes.api.model.NodeAffinity;
+import io.fabric8.kubernetes.api.model.PodAffinity;
+import io.fabric8.kubernetes.api.model.PodAntiAffinity;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.client.Config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
+
+import static org.springframework.cloud.deployer.spi.kubernetes.KubernetesDeployerProperties.KUBERNETES_DEPLOYER_PROPERTIES_PREFIX;
 
 /**
  * @author Florian Rosenberg
@@ -32,15 +38,24 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @author Ilayaperumal Gopinathan
  * @author Leonardo Diniz
  * @author Chris Schaefer
+ * @author David Turanski
+ * @author Enrique Medina Montenegro
  */
-@ConfigurationProperties(prefix = "spring.cloud.deployer.kubernetes")
+@ConfigurationProperties(prefix = KUBERNETES_DEPLOYER_PROPERTIES_PREFIX)
 public class KubernetesDeployerProperties {
+	static final String KUBERNETES_DEPLOYER_PROPERTIES_PREFIX = "spring.cloud.deployer.kubernetes";
 
 	/**
 	 * Constants for app deployment properties that don't have a deployer level default property.
 	 */
-	public static final String KUBERNETES_DEPLOYMENT_NODE_SELECTOR = "spring.cloud.deployer.kubernetes.deployment.nodeSelector";
+	static final String KUBERNETES_DEPLOYMENT_NODE_SELECTOR = "spring.cloud.deployer.kubernetes.deployment.nodeSelector";
 
+	/**
+	 * The maximum concurrent tasks allowed for this platform instance.
+	 */
+	private int maximumConcurrentTasks = 20;
+
+	@NestedConfigurationProperty
 	private Config fabric8 = Config.autoConfigure(null);
 
 	public Config getFabric8() {
@@ -52,18 +67,64 @@ public class KubernetesDeployerProperties {
 	}
 
 	/**
-	 * Encapsulates resources for Kubernetes Container resource requests and limits
+	 * Encapsulates resources for Kubernetes Container resource limits
 	 */
-	public static class Resources {
+	public static class LimitsResources {
 
+		/**
+		 * Container resource cpu limit.
+		 */
 		private String cpu;
 
+		/**
+		 * Container resource memory limit.
+		 */
 		private String memory;
 
-		public Resources() {
+		public LimitsResources() {
 		}
 
-		public Resources(String cpu, String memory) {
+		public LimitsResources(String cpu, String memory) {
+			this.cpu = cpu;
+			this.memory = memory;
+		}
+
+		public String getCpu() {
+			return cpu;
+		}
+
+		public void setCpu(String cpu) {
+			this.cpu = cpu;
+		}
+
+		public String getMemory() {
+			return memory;
+		}
+
+		public void setMemory(String memory) {
+			this.memory = memory;
+		}
+	}
+
+	/**
+	 * Encapsulates resources for Kubernetes Container resource requests
+	 */
+	public static class RequestsResources {
+
+		/**
+		 * Container request limit.
+		 */
+		private String cpu;
+
+		/**
+		 * Container memory limit.
+		 */
+		private String memory;
+
+		public RequestsResources() {
+		}
+
+		public RequestsResources(String cpu, String memory) {
 			this.cpu = cpu;
 			this.memory = memory;
 		}
@@ -99,8 +160,14 @@ public class KubernetesDeployerProperties {
 
 		public static class VolumeClaimTemplate {
 
+			/**
+			 * VolumeClaimTemplate storage.
+			 */
 			private String storage = "10m";
 
+			/**
+			 * VolumeClaimTemplate storage class name.
+			 */
 			private String storageClassName;
 
 			public String getStorage() {
@@ -121,8 +188,162 @@ public class KubernetesDeployerProperties {
 		}
 	}
 
-	private static String KUBERNETES_NAMESPACE =
-			System.getenv("KUBERNETES_NAMESPACE") != null ? System.getenv("KUBERNETES_NAMESPACE") : "default";
+	public static class Toleration {
+
+		private String effect;
+
+		private String key;
+
+		private String operator;
+
+		private Long tolerationSeconds;
+
+		private String value;
+
+		public String getEffect() {
+			return effect;
+		}
+
+		public void setEffect(String effect) {
+			this.effect = effect;
+		}
+
+		public String getKey() {
+			return key;
+		}
+
+		public void setKey(String key) {
+			this.key = key;
+		}
+
+		public String getOperator() {
+			return operator;
+		}
+
+		public void setOperator(String operator) {
+			this.operator = operator;
+		}
+
+		public Long getTolerationSeconds() {
+			return tolerationSeconds;
+		}
+
+		public void setTolerationSeconds(Long tolerationSeconds) {
+			this.tolerationSeconds = tolerationSeconds;
+		}
+
+		public String getValue() {
+			return value;
+		}
+
+		public void setValue(String value) {
+			this.value = value;
+		}
+	}
+
+	static class KeyRef {
+		private String envVarName;
+		private String dataKey;
+
+		public void setEnvVarName(String envVarName) {
+			this.envVarName = envVarName;
+		}
+
+		public String getEnvVarName() {
+			return envVarName;
+		}
+
+		public void setDataKey(String dataKey) {
+			this.dataKey = dataKey;
+		}
+
+		public String getDataKey() {
+			return dataKey;
+		}
+	}
+
+	public static class SecretKeyRef extends KeyRef {
+		private String secretName;
+
+		public void setSecretName(String secretName) {
+			this.secretName = secretName;
+		}
+
+		public String getSecretName() {
+			return secretName;
+		}
+	}
+
+	public static class ConfigMapKeyRef extends KeyRef {
+		private String configMapName;
+
+		public void setConfigMapName(String configMapName) {
+			this.configMapName = configMapName;
+		}
+
+		public String getConfigMapName() {
+			return configMapName;
+		}
+	}
+
+	public static class PodSecurityContext {
+		private Long runAsUser;
+		private Long fsGroup;
+
+		public void setRunAsUser(Long runAsUser) {
+			this.runAsUser = runAsUser;
+		}
+
+		public Long getRunAsUser() {
+			return this.runAsUser;
+		}
+
+		public void setFsGroup(Long fsGroup) {
+			this.fsGroup = fsGroup;
+		}
+
+		public Long getFsGroup() {
+			return fsGroup;
+		}
+	}
+
+	public static class InitContainer {
+		private String imageName;
+		private String containerName;
+		private List<String> commands;
+
+		public String getImageName() {
+			return imageName;
+		}
+
+		public void setImageName(String imageName) {
+			this.imageName = imageName;
+		}
+
+		public String getContainerName() {
+			return containerName;
+		}
+
+		public void setContainerName(String containerName) {
+			this.containerName = containerName;
+		}
+
+		public List<String> getCommands() {
+			return commands;
+		}
+
+		public void setCommands(List<String> commands) {
+			this.commands = commands;
+		}
+	}
+
+
+	/**
+	 * Name of the environment variable that can define the Kubernetes namespace to use.
+	 */
+	public static final String ENV_KEY_KUBERNETES_NAMESPACE = "KUBERNETES_NAMESPACE";
+
+	private static String KUBERNETES_NAMESPACE = System.getenv("KUBERNETES_NAMESPACE");
 
 	/**
 	 * Namespace to use.
@@ -138,26 +359,26 @@ public class KubernetesDeployerProperties {
 	 * Delay in seconds when the Kubernetes liveness check of the app container
 	 * should start checking its health status.
 	 */
-	// See http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// See https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private int livenessProbeDelay = 10;
 
 	/**
 	 * Period in seconds for performing the Kubernetes liveness check of the app container.
 	 */
-	// See http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// See https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private int livenessProbePeriod = 60;
 
 	/**
 	 * Timeout in seconds for the Kubernetes liveness check of the app container.
 	 * If the health check takes longer than this value to return it is assumed as 'unavailable'.
 	 */
-	// see http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// see https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private int livenessProbeTimeout = 2;
 
 	/**
 	 * Path that app container has to respond to for liveness check.
 	 */
-	// See http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// See https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private String livenessProbePath;
 
 	/**
@@ -169,26 +390,26 @@ public class KubernetesDeployerProperties {
 	 * Delay in seconds when the readiness check of the app container
 	 * should start checking if the module is fully up and running.
 	 */
-	// see http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// see https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private int readinessProbeDelay = 10;
 
 	/**
 	 * Period in seconds to perform the readiness check of the app container.
 	 */
-	// see http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// see https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private int readinessProbePeriod = 10;
 
 	/**
 	 * Timeout in seconds that the app container has to respond to its
 	 * health status during the readiness check.
 	 */
-	// see http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// see https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private int readinessProbeTimeout = 2;
 
 	/**
 	 * Path that app container has to respond to for readiness check.
 	 */
-	// See http://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
+	// See https://kubernetes.io/v1.0/docs/user-guide/production-pods.html#liveness-and-readiness-probes-aka-health-checks}
 	private String readinessProbePath;
 
 	/**
@@ -204,12 +425,37 @@ public class KubernetesDeployerProperties {
 	/**
 	 * Memory and CPU limits (i.e. maximum needed values) to allocate for a Pod.
 	 */
-	private Resources limits = new Resources();
+	private LimitsResources limits = new LimitsResources();
 
 	/**
 	 * Memory and CPU requests (i.e. guaranteed needed values) to allocate for a Pod.
 	 */
-	private Resources requests = new Resources();
+	private RequestsResources requests = new RequestsResources();
+
+	/**
+	 * Tolerations to allocate for a Pod.
+	 */
+	private List<Toleration> tolerations = new ArrayList<>();
+
+	/**
+	 * Secret key references to be added to the Pod environment.
+	 */
+	private List<SecretKeyRef> secretKeyRefs = new ArrayList<>();
+
+	/**
+	 * ConfigMap key references to be added to the Pod environment.
+	 */
+	private List<ConfigMapKeyRef> configMapKeyRefs = new ArrayList<>();
+
+	/**
+	 * ConfigMap references to be added to the Pod environment.
+	 */
+	private List<String> configMapRefs = new ArrayList<>();
+
+	/**
+	 * Secret references to be added to the Pod environment.
+	 */
+	private List<String> secretRefs = new ArrayList<>();
 
 	/**
 	 * Resources to assign for VolumeClaimTemplates (identified by metadata name) inside StatefulSet.
@@ -275,7 +521,7 @@ public class KubernetesDeployerProperties {
 
 	/**
 	 * The volumes that a Kubernetes instance supports.
-	 * See http://kubernetes.io/docs/user-guide/volumes/#types-of-volumes
+	 * See https://kubernetes.io/docs/user-guide/volumes/#types-of-volumes
 	 * This can be specified as a deployer property or as an app deployment property.
 	 * Deployment properties will override deployer properties.
 	 */
@@ -290,21 +536,50 @@ public class KubernetesDeployerProperties {
 	private boolean hostNetwork = false;
 
 	/**
-	 * Create a "Deployment" with a "Replica Set" instead of a "Replication Controller".
-	 * See https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
-	 */
-	private boolean createDeployment = true;
-
-	/**
 	 * Create a "Job" instead of just a "Pod" when launching tasks.
 	 * See https://kubernetes.io/docs/concepts/workloads/controllers/jobs-run-to-completion/
 	 */
 	private boolean createJob = false;
 
 	/**
+	 * The node selector to use in key:value format, comma separated
+	 */
+	private String nodeSelector;
+
+	/**
 	 * Service account name to use for app deployments
 	 */
 	private String deploymentServiceAccountName;
+
+	/**
+	 * The security context to apply to created pod's.
+	 */
+	private PodSecurityContext podSecurityContext;
+
+	/**
+	 * The node affinity rules to apply.
+	 */
+	private NodeAffinity nodeAffinity;
+
+	/**
+	 * The pod affinity rules to apply
+	 */
+	private PodAffinity podAffinity;
+
+	/**
+	 * The pod anti-affinity rules to apply
+	 */
+	private PodAntiAffinity podAntiAffinity;
+
+	/**
+	 * A custom init container image name to use when creating a StatefulSet
+	 */
+	private String statefulSetInitContainerImageName;
+
+	/**
+	 * A custom init container to apply.
+	 */
+	private InitContainer initContainer;
 
 	public String getNamespace() {
 		return namespace;
@@ -419,44 +694,44 @@ public class KubernetesDeployerProperties {
 		this.statefulSet = statefulSet;
 	}
 
-	/**
-	 * @deprecated Use {@link #getLimits()}
-	 *
-	 * @return the memory limits to use
-	 */
-	@Deprecated
-	public String getMemory() {
-		return getLimits().getMemory();
+	public List<Toleration> getTolerations() {
+		return tolerations;
 	}
 
-	/**
-	 * @deprecated Use {@link #setLimits(Resources)}
-	 *
-	 * @param memory the memory limit to set
-	 */
-	@Deprecated
-	public void setMemory(String memory) {
-		getLimits().setMemory(memory);
+	public void setTolerations(List<Toleration> tolerations) {
+		this.tolerations = tolerations;
 	}
 
-	/**
-	 * @deprecated Use {@link #getLimits()}
-	 *
-	 * @return the CPU limits to use
-	 */
-	@Deprecated
-	public String getCpu() {
-		return getLimits().getCpu();
+	public List<SecretKeyRef> getSecretKeyRefs() {
+		return secretKeyRefs;
 	}
 
-	/**
-	 * @deprecated Use {@link #setLimits(Resources)}
-	 *
-	 * @param cpu the CPU limits to set
-	 */
-	@Deprecated
-	public void setCpu(String cpu) {
-		getLimits().setCpu(cpu);
+	public void setSecretKeyRefs(List<SecretKeyRef> secretKeyRefs) {
+		this.secretKeyRefs = secretKeyRefs;
+	}
+
+	public List<ConfigMapKeyRef> getConfigMapKeyRefs() {
+		return configMapKeyRefs;
+	}
+
+	public void setConfigMapKeyRefs(List<ConfigMapKeyRef> configMapKeyRefs) {
+		this.configMapKeyRefs = configMapKeyRefs;
+	}
+
+	public List<String> getConfigMapRefs() {
+		return configMapRefs;
+	}
+
+	public void setConfigMapRefs(List<String> configMapRefs) {
+		this.configMapRefs = configMapRefs;
+	}
+
+	public List<String> getSecretRefs() {
+		return secretRefs;
+	}
+
+	public void setSecretRefs(List<String> secretRefs) {
+		this.secretRefs = secretRefs;
 	}
 
 	public String[] getEnvironmentVariables() {
@@ -539,19 +814,19 @@ public class KubernetesDeployerProperties {
 		this.imagePullPolicy = imagePullPolicy;
 	}
 
-	public Resources getLimits() {
+	public LimitsResources getLimits() {
 		return limits;
 	}
 
-	public void setLimits(Resources limits) {
+	public void setLimits(LimitsResources limits) {
 		this.limits = limits;
 	}
 
-	public Resources getRequests() {
+	public RequestsResources getRequests() {
 		return requests;
 	}
 
-	public void setRequests(Resources requests) {
+	public void setRequests(RequestsResources requests) {
 		this.requests = requests;
 	}
 
@@ -579,24 +854,6 @@ public class KubernetesDeployerProperties {
 		this.hostNetwork = hostNetwork;
 	}
 
-	/**
-	 * @deprecated as of 1.3. This property is true by default and will not be an option in future releases.
-	 * @return should a deployment be created
-	 */
-	@Deprecated
-	public boolean isCreateDeployment() {
-		return createDeployment;
-	}
-
-	/**
-	 * @deprecated as of 1.3.  This property is true by default and will not be an option in future releases.
-	 * @param createDeployment create a deployment or not
-	 */
-	@Deprecated
-	public void setCreateDeployment(boolean createDeployment) {
-		this.createDeployment = createDeployment;
-	}
-
 	public boolean isCreateJob() {
 		return createJob;
 	}
@@ -611,5 +868,69 @@ public class KubernetesDeployerProperties {
 
 	public void setDeploymentServiceAccountName(String deploymentServiceAccountName) {
 		this.deploymentServiceAccountName = deploymentServiceAccountName;
+	}
+
+	public int getMaximumConcurrentTasks() {
+		return maximumConcurrentTasks;
+	}
+
+	public void setMaximumConcurrentTasks(int maximumConcurrentTasks) {
+		this.maximumConcurrentTasks = maximumConcurrentTasks;
+	}
+
+	public void setNodeSelector(String nodeSelector) {
+		this.nodeSelector = nodeSelector;
+	}
+
+	public String getNodeSelector() {
+		return nodeSelector;
+	}
+
+	public void setPodSecurityContext(PodSecurityContext podSecurityContext) {
+		this.podSecurityContext = podSecurityContext;
+	}
+
+	public PodSecurityContext getPodSecurityContext() {
+		return podSecurityContext;
+	}
+
+	public NodeAffinity getNodeAffinity() {
+		return nodeAffinity;
+	}
+
+	public void setNodeAffinity(NodeAffinity nodeAffinity) {
+		this.nodeAffinity = nodeAffinity;
+	}
+
+	public PodAffinity getPodAffinity() {
+		return podAffinity;
+	}
+
+	public void setPodAffinity(PodAffinity podAffinity) {
+		this.podAffinity = podAffinity;
+	}
+
+	public PodAntiAffinity getPodAntiAffinity() {
+		return podAntiAffinity;
+	}
+
+	public void setPodAntiAffinity(PodAntiAffinity podAntiAffinity) {
+		this.podAntiAffinity = podAntiAffinity;
+	}
+
+	public String getStatefulSetInitContainerImageName() {
+		return statefulSetInitContainerImageName;
+	}
+
+	public void setStatefulSetInitContainerImageName(String statefulSetInitContainerImageName) {
+		this.statefulSetInitContainerImageName = statefulSetInitContainerImageName;
+	}
+
+	public InitContainer getInitContainer() {
+		return initContainer;
+	}
+
+	public void setInitContainer(InitContainer initContainer) {
+		this.initContainer = initContainer;
 	}
 }

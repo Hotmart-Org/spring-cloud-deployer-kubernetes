@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-2018 the original author or authors.
+ * Copyright 2015-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,42 +16,36 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
-import static java.lang.String.format;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
+import io.fabric8.kubernetes.api.model.Affinity;
 import io.fabric8.kubernetes.api.model.Container;
+import io.fabric8.kubernetes.api.model.ContainerStatus;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
+import io.fabric8.kubernetes.api.model.PodSecurityContext;
 import io.fabric8.kubernetes.api.model.PodSpec;
 import io.fabric8.kubernetes.api.model.PodSpecBuilder;
-import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
-import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
-import org.springframework.boot.context.properties.bind.Bindable;
-import org.springframework.boot.context.properties.bind.Binder;
-import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.app.AppStatus;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.core.RuntimeEnvironmentInfo;
-import org.springframework.cloud.deployer.spi.util.ByteSizeUtils;
+import org.springframework.cloud.deployer.spi.kubernetes.support.PropertyParserUtils;
+import org.springframework.cloud.deployer.spi.scheduler.ScheduleRequest;
 import org.springframework.cloud.deployer.spi.util.RuntimeVersionUtils;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.util.Assert;
+import org.springframework.core.io.Resource;
 import org.springframework.util.StringUtils;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.stream.Collectors;
 
 /**
  * Abstract base class for a deployer that targets Kubernetes.
@@ -62,6 +56,8 @@ import java.util.stream.Collectors;
  * @author Donovan Muller
  * @author David Turanski
  * @author Chris Schaefer
+ * @author Enrique Medina Montenegro
+ * @author Ilayaperumal Gopinathan
  */
 public class AbstractKubernetesDeployer {
 
@@ -71,13 +67,17 @@ public class AbstractKubernetesDeployer {
 	protected static final String SPRING_MARKER_KEY = "role";
 	protected static final String SPRING_MARKER_VALUE = "spring-app";
 
+	private static final String SERVER_PORT_KEY = "server.port";
+
 	protected final Log logger = LogFactory.getLog(getClass().getName());
 
 	protected ContainerFactory containerFactory;
 
 	protected KubernetesClient client;
 
-	protected KubernetesDeployerProperties properties = new KubernetesDeployerProperties();
+	protected KubernetesDeployerProperties properties;
+
+	protected DeploymentPropertiesResolver deploymentPropertiesResolver;
 
 	/**
 	 * Create the RuntimeEnvironmentInfo.
@@ -101,15 +101,13 @@ public class AbstractKubernetesDeployer {
 	}
 
 	/**
-	 * Creates a map of labels for a given ID. This will allow Kubernetes services
-	 * to "select" the right ReplicationControllers.
+	 * Creates a map of labels for a given application ID.
 	 *
 	 * @param appId the application id
 	 * @param request The {@link AppDeploymentRequest}
 	 * @return the built id map of labels
 	 */
-	protected Map<String, String> createIdMap(String appId, AppDeploymentRequest request) {
-		//TODO: handling of app and group ids
+	Map<String, String> createIdMap(String appId, AppDeploymentRequest request) {
 		Map<String, String> map = new HashMap<>();
 		map.put(SPRING_APP_KEY, appId);
 		String groupId = request.getDeploymentProperties().get(AppDeployer.GROUP_PROPERTY_KEY);
@@ -125,63 +123,89 @@ public class AbstractKubernetesDeployer {
 		Service service = null;
 		if (podList != null && podList.getItems() != null) {
 			for (Pod pod : podList.getItems()) {
+				String deploymentKey = pod.getMetadata().getLabels().get(SPRING_DEPLOYMENT_KEY);
 				for (Service svc : services.getItems()) {
-					if (svc.getMetadata().getName()
-							.equals(pod.getMetadata().getLabels().get(SPRING_DEPLOYMENT_KEY))) {
+					if (svc.getMetadata().getName().equals(deploymentKey)) {
 						service = svc;
 						break;
 					}
 				}
-				statusBuilder.with(new KubernetesAppInstanceStatus(pod, service, properties));
+				//find the container with the correct env var
+				for(Container container : pod.getSpec().getContainers()) {
+					if(container.getEnv().stream().anyMatch(envVar -> "SPRING_CLOUD_APPLICATION_GUID".equals(envVar.getName()))) {
+						//find container status for this container
+						Optional<ContainerStatus> containerStatusOptional =
+							pod.getStatus().getContainerStatuses()
+							   .stream().filter(containerStatus -> container.getName().equals(containerStatus.getName()))
+							   .findFirst();
+
+						statusBuilder.with(new KubernetesAppInstanceStatus(pod, service, properties, containerStatusOptional.orElse(null)));
+
+						break;
+					}
+				}
 			}
 		}
 		return statusBuilder.build();
 	}
 
+	protected void logPossibleDownloadResourceMessage(Resource resource) {
+		if (logger.isInfoEnabled()) {
+			logger.info("Preparing to run a container from  " + resource
+					+ ". This may take some time if the image must be downloaded from a remote container registry.");
+		}
+	}
 
 	/**
-	 * Create a PodSpec to be used for app and task deployments
-	 *
-	 * @param appId the app ID
-	 * @param request app deployment request
-	 * @param port port to use for app or null if none
-	 * @param neverRestart use restart policy of Never
+	 * Create PodSpec for the given {@link AppDeploymentRequest}
+
+	 * @param appDeploymentRequest the app deployment request to use to create the PodSpec
 	 * @return the PodSpec
 	 */
-	protected PodSpec createPodSpec(String appId, AppDeploymentRequest request, Integer port,
-		boolean neverRestart) {
+	PodSpec createPodSpec(AppDeploymentRequest appDeploymentRequest) {
+
+		String appId = createDeploymentId(appDeploymentRequest);
+
+		Map<String, String>  deploymentProperties = (appDeploymentRequest instanceof ScheduleRequest) ?
+				((ScheduleRequest) appDeploymentRequest).getSchedulerProperties() : appDeploymentRequest.getDeploymentProperties();
+
 		PodSpecBuilder podSpec = new PodSpecBuilder();
 
-		String imagePullSecret = getImagePullSecret(request);
+		String imagePullSecret = this.deploymentPropertiesResolver.getImagePullSecret(deploymentProperties);
 
 		if (imagePullSecret != null) {
 			podSpec.addNewImagePullSecret(imagePullSecret);
 		}
 
-		boolean hostNetwork = getHostNetwork(request);
+		boolean hostNetwork = this.deploymentPropertiesResolver.getHostNetwork(deploymentProperties);
 
-		ContainerConfiguration containerConfiguration = new ContainerConfiguration(appId, request)
-				.withProbeCredentialsSecret(getProbeCredentialsSecret(request))
-				.withExternalPort(port)
+		ContainerConfiguration containerConfiguration = new ContainerConfiguration(appId, appDeploymentRequest)
+				.withProbeCredentialsSecret(getProbeCredentialsSecret(deploymentProperties))
 				.withHostNetwork(hostNetwork);
+
+		if (KubernetesAppDeployer.class.isAssignableFrom(this.getClass())) {
+			containerConfiguration.withExternalPort(getExternalPort(appDeploymentRequest));
+		}
 
 		Container container = containerFactory.create(containerConfiguration);
 
 		// add memory and cpu resource limits
 		ResourceRequirements req = new ResourceRequirements();
-		req.setLimits(deduceResourceLimits(request));
-		req.setRequests(deduceResourceRequests(request));
+		req.setLimits(this.deploymentPropertiesResolver.deduceResourceLimits(deploymentProperties));
+		req.setRequests(this.deploymentPropertiesResolver.deduceResourceRequests(deploymentProperties));
 		container.setResources(req);
-		ImagePullPolicy pullPolicy = deduceImagePullPolicy(request);
+		ImagePullPolicy pullPolicy = this.deploymentPropertiesResolver.deduceImagePullPolicy(deploymentProperties);
 		container.setImagePullPolicy(pullPolicy.name());
 
-		//
-		Map<String, String> nodeSelectors = getNodeSelectors(request.getDeploymentProperties());
+		Map<String, String> nodeSelectors = this.deploymentPropertiesResolver.getNodeSelectors(deploymentProperties);
 		if (nodeSelectors.size() > 0) {
 			podSpec.withNodeSelector(nodeSelectors);
 		}
+
+		podSpec.withTolerations(this.deploymentPropertiesResolver.getTolerations(deploymentProperties));
+
 		// only add volumes with corresponding volume mounts
-		podSpec.withVolumes(getVolumes(request).stream()
+		podSpec.withVolumes(this.deploymentPropertiesResolver.getVolumes(deploymentProperties).stream()
 				.filter(volume -> container.getVolumeMounts().stream()
 						.anyMatch(volumeMount -> volumeMount.getName().equals(volume.getName())))
 				.collect(Collectors.toList()));
@@ -191,291 +215,72 @@ public class AbstractKubernetesDeployer {
 		}
 		podSpec.addToContainers(container);
 
-		if (neverRestart){
-			podSpec.withRestartPolicy("Never");
-		}
+		podSpec.withRestartPolicy(this.deploymentPropertiesResolver.getRestartPolicy(deploymentProperties).name());
 
-		String deploymentServiceAcccountName = getDeploymentServiceAccountName(request);
+		String deploymentServiceAcccountName = this.deploymentPropertiesResolver.getDeploymentServiceAccountName(deploymentProperties);
 
 		if (deploymentServiceAcccountName != null) {
 			podSpec.withServiceAccountName(deploymentServiceAcccountName);
 		}
 
+		PodSecurityContext podSecurityContext = this.deploymentPropertiesResolver.getPodSecurityContext(deploymentProperties);
+		if (podSecurityContext != null) {
+			podSpec.withSecurityContext(podSecurityContext);
+		}
+
+		Affinity affinity = this.deploymentPropertiesResolver.getAffinityRules(deploymentProperties);
+		// Make sure there is at least some rule.
+		if (affinity.getNodeAffinity() != null
+				|| affinity.getPodAffinity() != null
+				|| affinity.getPodAntiAffinity() != null) {
+			podSpec.withAffinity(affinity);
+		}
+
+		Container initContainer = this.deploymentPropertiesResolver.getInitContainer(deploymentProperties);
+		if (initContainer != null) {
+			podSpec.addToInitContainers(initContainer);
+		}
+
 		return podSpec.build();
 	}
 
-	/**
-	 * Volume deployment properties are specified in YAML format:
-	 *
-	 * <code>
-	 *     spring.cloud.deployer.kubernetes.volumes=[{name: testhostpath, hostPath: { path: '/test/override/hostPath' }},
-	 *     	{name: 'testpvc', persistentVolumeClaim: { claimName: 'testClaim', readOnly: 'true' }},
-	 *     	{name: 'testnfs', nfs: { server: '10.0.0.1:111', path: '/test/nfs' }}]
-	 * </code>
-	 *
-	 * Volumes can be specified as deployer properties as well as app deployment properties.
-	 * Deployment properties override deployer properties.
-	 *
-	 * @param request the {@link AppDeploymentRequest}
-	 * @return the configured volumes
-	 */
-	protected List<Volume> getVolumes(AppDeploymentRequest request) {
-		List<Volume> volumes = new ArrayList<>();
-
-		String volumeDeploymentProperty = request.getDeploymentProperties()
-				.getOrDefault("spring.cloud.deployer.kubernetes.volumes", "");
-		if (!StringUtils.isEmpty(volumeDeploymentProperty)) {
-			try {
-				YamlPropertiesFactoryBean properties = new YamlPropertiesFactoryBean();
-				String tmpYaml = "{ volumes: " + volumeDeploymentProperty + " }";
-				properties.setResources(new ByteArrayResource(tmpYaml.getBytes()));
-				Properties yaml = properties.getObject();
-				MapConfigurationPropertySource source = new MapConfigurationPropertySource(yaml);
-				KubernetesDeployerProperties deployerProperties = new Binder(source)
-						.bind("", Bindable.of(KubernetesDeployerProperties.class)).get();
-				volumes.addAll(deployerProperties.getVolumes());
-			} catch (Exception e) {
-				throw new IllegalArgumentException(
-						String.format("Invalid volume '%s'", volumeDeploymentProperty), e);
-			}
+	int getExternalPort(final AppDeploymentRequest request) {
+		int externalPort = 8080;
+		Map<String, String> parameters = request.getDefinition().getProperties();
+		if (parameters.containsKey(SERVER_PORT_KEY)) {
+			externalPort = Integer.valueOf(parameters.get(SERVER_PORT_KEY));
 		}
-		// only add volumes that have not already been added, based on the volume's name
-		// i.e. allow provided deployment volumes to override deployer defined volumes
-		volumes.addAll(properties.getVolumes().stream()
-				.filter(volume -> volumes.stream()
-						.noneMatch(existingVolume -> existingVolume.getName().equals(volume.getName())))
-				.collect(Collectors.toList()));
 
-		return volumes;
+		return externalPort;
 	}
 
-	/**
-	 * Get the resource limits for the deployment request. A Pod can define its maximum needed resources by setting the
-	 * limits and Kubernetes can provide more resources if any are free.
-	 * <p>
-	 * Falls back to the server properties if not present in the deployment request.
-	 * <p>
-	 * Also supports the deprecated properties {@code spring.cloud.deployer.kubernetes.memory/cpu}.
-	 *
-	 * @param request The deployment properties.
-	 * @return the resource limits to use
-	 */
-	protected Map<String, Quantity> deduceResourceLimits(AppDeploymentRequest request) {
-		String memDeployer = getCommonDeployerMemory(request);
-		String memOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.memory");
-		if (memDeployer != null) {
-			if (memOverride == null) {
-				memOverride = memDeployer;
-			}
-			else {
-				logger.warn(String.format("Both " + AppDeployer.MEMORY_PROPERTY_KEY +
-								"=%s and spring.cloud.deployer.kubernetes.memory=%s specified, the latter will take precedence.",
-						memDeployer, memOverride));
-			}
-		}
-		String memLimitsOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.limits.memory");
-		if (memLimitsOverride != null) {
-			// Non-deprecated value has priority
-			memOverride = memLimitsOverride;
-		}
-
-		// Use server property if there is no request setting
-		if (memOverride == null) {
-			if (properties.getLimits().getMemory() != null) {
-				memOverride = properties.getLimits().getMemory();
-			}
-		}
-
-		String cpuDeployer = request.getDeploymentProperties().get(AppDeployer.CPU_PROPERTY_KEY);
-		String cpuOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.cpu");
-		if (cpuDeployer != null) {
-			if (cpuOverride == null) {
-				cpuOverride = cpuDeployer;
-			}
-			else {
-				logger.warn(String.format("Both " + AppDeployer.CPU_PROPERTY_KEY +
-								"=%s and spring.cloud.deployer.kubernetes.cpu=%s specified, the latter will take precedence.",
-						cpuDeployer, cpuOverride));
-			}
-		}
-		String cpuLimitsOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.limits.cpu");
-		if (cpuLimitsOverride != null) {
-			// Non-deprecated value has priority
-			cpuOverride = cpuLimitsOverride;
-		}
-
-		// Use server property if there is no request setting
-		if (cpuOverride == null) {
-			if (properties.getLimits().getCpu() != null) {
-				cpuOverride = properties.getLimits().getCpu();
-			}
-		}
-
-		logger.debug("Using limits - cpu: " + cpuOverride + " mem: " + memOverride);
-
-		Map<String,Quantity> limits = new HashMap<String,Quantity>();
-		limits.put("memory", new Quantity(memOverride));
-		limits.put("cpu", new Quantity(cpuOverride));
-		return limits;
-	}
-
-	/**
-	 * Get the image pull policy for the deployment request. If it is not present use the server default. If an override
-	 * for the deployment is present but not parseable, fall back to a default value.
-	 *
-	 * @param request The deployment request.
-	 * @return The image pull policy to use for the container in the request.
-	 */
-	protected ImagePullPolicy deduceImagePullPolicy(AppDeploymentRequest request) {
-		String pullPolicyOverride =
-				request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.imagePullPolicy");
-
-		ImagePullPolicy pullPolicy;
-		if (pullPolicyOverride == null) {
-			pullPolicy = properties.getImagePullPolicy();
-		} else {
-			pullPolicy = ImagePullPolicy.relaxedValueOf(pullPolicyOverride);
-			if (pullPolicy == null) {
-				logger.warn("Parsing of pull policy " + pullPolicyOverride + " failed, using default \"IfNotPresent\".");
-				pullPolicy = ImagePullPolicy.IfNotPresent;
-			}
-		}
-		logger.debug("Using imagePullPolicy " + pullPolicy);
-		return pullPolicy;
-	}
-
-	/**
-	 * Get the resource requests for the deployment request. Resource requests are guaranteed by the Kubernetes
-	 * runtime.
-	 * Falls back to the server properties if not present in the deployment request.
-	 *
-	 * @param request The deployment properties.
-	 * @return the resource requests to use
-	 */
-	protected Map<String, Quantity> deduceResourceRequests(AppDeploymentRequest request) {
-		String memOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.requests.memory");
-		if (memOverride == null) {
-			memOverride = properties.getRequests().getMemory();
-		}
-
-		String cpuOverride = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.requests.cpu");
-		if (cpuOverride == null) {
-			cpuOverride = properties.getRequests().getCpu();
-		}
-
-		logger.debug("Using requests - cpu: " + cpuOverride + " mem: " + memOverride);
-
-		Map<String,Quantity> requests = new HashMap<String, Quantity>();
-		if (memOverride != null) {
-			requests.put("memory", new Quantity(memOverride));
-		}
-		if (cpuOverride != null) {
-			requests.put("cpu", new Quantity(cpuOverride));
-		}
-		return requests;
-	}
-
-	protected String getStatefulSetStorageClassName(AppDeploymentRequest request) {
-		String storageClassName = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.statefulSet.volumeClaimTemplate.storageClassName");
-		if (storageClassName == null && properties.getStatefulSet() != null && properties.getStatefulSet().getVolumeClaimTemplate() != null) {
-			storageClassName = properties.getStatefulSet().getVolumeClaimTemplate().getStorageClassName();
-		}
-		return storageClassName;
-	}
-
-	protected String getStatefulSetStorage(AppDeploymentRequest request) {
-		String storage = request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.statefulSet.volumeClaimTemplate.storage");
-		if (storage == null && properties.getStatefulSet() != null && properties.getStatefulSet().getVolumeClaimTemplate() != null) {
-			storage = properties.getStatefulSet().getVolumeClaimTemplate().getStorage();
-		}
-		long storageAmount = ByteSizeUtils.parseToMebibytes(storage);
-		return storageAmount + "Mi";
-	}
-
-	/**
-	 * Get the hostNetwork setting for the deployment request.
-	 *
-	 * @param request The deployment request.
-	 * @return Whether host networking is requested
-	 */
-	protected boolean getHostNetwork(AppDeploymentRequest request) {
-		String hostNetworkOverride =
-				request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.hostNetwork");
-		boolean hostNetwork;
-		if (StringUtils.isEmpty(hostNetworkOverride)) {
-			hostNetwork = properties.isHostNetwork();
+	String createDeploymentId(AppDeploymentRequest request) {
+		String groupId = request.getDeploymentProperties().get(AppDeployer.GROUP_PROPERTY_KEY);
+		String deploymentId;
+		if (groupId == null) {
+			deploymentId = String.format("%s", request.getDefinition().getName());
 		}
 		else {
-			hostNetwork = Boolean.valueOf(hostNetworkOverride);
+			deploymentId = String.format("%s-%s", groupId, request.getDefinition().getName());
 		}
-		logger.debug("Using hostNetwork " + hostNetwork);
-		return hostNetwork;
+		// Kubernetes does not allow . in the name and does not allow uppercase in the name
+		return deploymentId.replace('.', '-').toLowerCase();
 	}
 
 	/**
-	 * Get the nodeSelectors setting for the deployment request.
-	 *
-	 * @param properties The deployment request deployment properties.
-	 * @return map of nodeSelectors
+	 * Return the Secret corresponds to the name of ProbeCredentialSecret
+	 * @param kubernetesDeployerProperties the kubernetes deployer properties
+	 * @return the Secret Object
 	 */
-	protected Map<String, String> getNodeSelectors(Map<String, String> properties) {
-		Map<String, String> nodeSelectors = new HashMap<>();
+	Secret getProbeCredentialsSecret(Map<String, String> kubernetesDeployerProperties) {
+		String secretName = PropertyParserUtils.getDeploymentPropertyValue(kubernetesDeployerProperties,
+				this.deploymentPropertiesResolver.getPropertyPrefix() + ".probeCredentialsSecret");
 
-		String nodeSelectorsProperty = properties
-				.getOrDefault(KubernetesDeployerProperties.KUBERNETES_DEPLOYMENT_NODE_SELECTOR, "");
-
-		if (StringUtils.hasText(nodeSelectorsProperty)) {
-			String[] nodeSelectorPairs = nodeSelectorsProperty.split(",");
-			for (String nodeSelectorPair : nodeSelectorPairs) {
-				String[] nodeSelector = nodeSelectorPair.split(":");
-				Assert.isTrue(nodeSelector.length == 2, format("Invalid nodeSelector value: '{}'", nodeSelectorPair));
-				nodeSelectors.put(nodeSelector[0].trim(), nodeSelector[1].trim());
-			}
+		if (!StringUtils.isEmpty(secretName)) {
+			return this.client.secrets().withName(secretName).get();
 		}
 
-		return nodeSelectors;
+		return null;
 	}
 
-	private String getCommonDeployerMemory(AppDeploymentRequest request) {
-		String mem = request.getDeploymentProperties().get(AppDeployer.MEMORY_PROPERTY_KEY);
-		if (mem == null) {
-			return null;
-		}
-		long memAmount = ByteSizeUtils.parseToMebibytes(mem);
-		return memAmount + "Mi";
-	}
-
-	private String getImagePullSecret(AppDeploymentRequest request) {
-		String imagePullSecret = request.getDeploymentProperties()
-				.getOrDefault("spring.cloud.deployer.kubernetes.imagePullSecret", "");
-
-		if(StringUtils.isEmpty(imagePullSecret)) {
-			imagePullSecret = properties.getImagePullSecret();
-		}
-
-		return imagePullSecret;
-	}
-
-	private String getDeploymentServiceAccountName(AppDeploymentRequest request) {
-		String deploymentServiceAccountName =
-				request.getDeploymentProperties().get("spring.cloud.deployer.kubernetes.deploymentServiceAccountName");
-
-		if (StringUtils.isEmpty(deploymentServiceAccountName)) {
-			deploymentServiceAccountName = properties.getDeploymentServiceAccountName();
-		}
-
-		return deploymentServiceAccountName;
-	}
-
-	private Secret getProbeCredentialsSecret(AppDeploymentRequest request) {
-		Secret secret = null;
-		String probeCredentialsSecret = "spring.cloud.deployer.kubernetes.probeCredentialsSecret";
-
-		if (request.getDeploymentProperties().containsKey(probeCredentialsSecret)) {
-			String secretName = request.getDeploymentProperties().get(probeCredentialsSecret);
-			secret = client.secrets().withName(secretName).get();
-		}
-
-		return secret;
-	}
 }

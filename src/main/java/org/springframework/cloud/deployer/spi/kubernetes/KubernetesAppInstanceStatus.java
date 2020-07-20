@@ -1,11 +1,11 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,6 +35,7 @@ import java.util.Map;
  * @author Florian Rosenberg
  * @author Thomas Risberg
  * @author David Turanski
+ * @author Chris Schaefer
  */
 public class KubernetesAppInstanceStatus implements AppInstanceStatus {
 
@@ -45,6 +46,7 @@ public class KubernetesAppInstanceStatus implements AppInstanceStatus {
 	private ContainerStatus containerStatus;
 	private RunningPhaseDeploymentStateResolver runningPhaseDeploymentStateResolver;
 
+	@Deprecated
 	public KubernetesAppInstanceStatus(Pod pod, Service service, KubernetesDeployerProperties properties) {
 		this.pod = pod;
 		this.service = service;
@@ -56,6 +58,14 @@ public class KubernetesAppInstanceStatus implements AppInstanceStatus {
 		else {
 			this.containerStatus = null;
 		}
+		this.runningPhaseDeploymentStateResolver = new DefaultRunningPhaseDeploymentStateResolver(properties);
+	}
+
+	public KubernetesAppInstanceStatus(Pod pod, Service service, KubernetesDeployerProperties properties, ContainerStatus containerStatus) {
+		this.pod = pod;
+		this.service = service;
+		this.properties = properties;
+		this.containerStatus = containerStatus;
 		this.runningPhaseDeploymentStateResolver = new DefaultRunningPhaseDeploymentStateResolver(properties);
 	}
 
@@ -122,6 +132,7 @@ public class KubernetesAppInstanceStatus implements AppInstanceStatus {
 				pod.getMetadata().getLabels().get(AbstractKubernetesDeployer.SPRING_APP_KEY));
 			result.put(AbstractKubernetesDeployer.SPRING_DEPLOYMENT_KEY.replace('-', '.'),
 				pod.getMetadata().getLabels().get(AbstractKubernetesDeployer.SPRING_DEPLOYMENT_KEY));
+			result.put("guid", pod.getMetadata().getUid());
 		}
 		if (service != null) {
 			result.put("service.name", service.getMetadata().getName());

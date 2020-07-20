@@ -1,11 +1,11 @@
 /*
- * Copyright 2018 the original author or authors.
+ * Copyright 2018-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,21 +16,27 @@
 
 package org.springframework.cloud.deployer.spi.kubernetes;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 import io.fabric8.kubernetes.api.model.HTTPGetActionBuilder;
 import io.fabric8.kubernetes.api.model.HTTPHeader;
 import io.fabric8.kubernetes.api.model.Probe;
 import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
-import org.springframework.util.Assert;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
+import org.springframework.cloud.deployer.spi.kubernetes.support.PropertyParserUtils;
+import org.springframework.cloud.deployer.spi.scheduler.ScheduleRequest;
+import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 /**
  * Base class for creating Probe's
  *
  * @author Chris Schaefer
+ * @author Ilayaperumal Gopinathan
  */
 abstract class ProbeCreator {
 	protected static final String KUBERNETES_DEPLOYER_PREFIX = "spring.cloud.deployer.kubernetes";
@@ -86,7 +92,13 @@ abstract class ProbeCreator {
 	}
 
 	protected Map<String, String> getDeploymentProperties() {
-		return containerConfiguration.getAppDeploymentRequest().getDeploymentProperties();
+		AppDeploymentRequest appDeploymentRequest = this.containerConfiguration.getAppDeploymentRequest();
+		return (appDeploymentRequest instanceof ScheduleRequest) ?
+				((ScheduleRequest) appDeploymentRequest).getSchedulerProperties() : appDeploymentRequest.getDeploymentProperties();
+	}
+
+	protected String getDeploymentPropertyValue(String propertyName) {
+		return PropertyParserUtils.getDeploymentPropertyValue(getDeploymentProperties(), propertyName);
 	}
 
 	protected Integer getDefaultPort() {
@@ -95,9 +107,10 @@ abstract class ProbeCreator {
 
 	protected boolean useBoot1ProbePath() {
 		String bootMajorVersionProperty = KUBERNETES_DEPLOYER_PREFIX + ".bootMajorVersion";
+		String bootMajorVersionValue = getDeploymentPropertyValue(bootMajorVersionProperty);
 
-		if (getDeploymentProperties().containsKey(bootMajorVersionProperty)) {
-			Integer bootMajorVersion = Integer.valueOf(getDeploymentProperties().get(bootMajorVersionProperty));
+		if (StringUtils.hasText(bootMajorVersionValue)) {
+			Integer bootMajorVersion = Integer.valueOf(bootMajorVersionValue);
 
 			if (bootMajorVersion == BOOT_1_MAJOR_VERSION) {
 				return true;

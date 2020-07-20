@@ -1,11 +1,11 @@
 /*
- * Copyright 2018 the original author or authors.
+ * Copyright 2018-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,16 +17,6 @@ package org.springframework.cloud.deployer.spi.kubernetes;
 
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.AutoConfigureOrder;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
-import org.springframework.test.context.junit4.SpringRunner;
 
 import static org.junit.Assert.assertEquals;
 
@@ -34,36 +24,56 @@ import static org.junit.Assert.assertEquals;
  * @author Ilayaperumal Gopinathan
  * @author Chris Schaefer
  */
-@RunWith(SpringRunner.class)
-@SpringBootTest(classes = {KubernetesConfigurationPropertiesTests.TestConfig.class}, properties = {
-		"spring.cloud.deployer.kubernetes.fabric8.trustCerts=true",
-		"spring.cloud.deployer.kubernetes.fabric8.masterUrl=http://localhost:8090",
-		"spring.cloud.deployer.kubernetes.fabric8.namespace=testing"
-})
 public class KubernetesConfigurationPropertiesTests {
-
-	@Autowired
-	private KubernetesClient kubernetesClient;
-
 	@Test
-	public void testFabric8Properties() {
+	public void testFabric8Namespacing() {
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.getFabric8().setTrustCerts(true);
+		kubernetesDeployerProperties.getFabric8().setMasterUrl("http://localhost:8090");
+		// this can be set programatically in properties as well as an environment variable
+		// (ie: CI, cmd line, etc) so ensure we have a clean slate here
+		kubernetesDeployerProperties.setNamespace(null);
+		kubernetesDeployerProperties.getFabric8().setNamespace("testing");
+
+		KubernetesClient kubernetesClient = KubernetesClientFactory
+				.getKubernetesClient(kubernetesDeployerProperties);
+
 		assertEquals("http://localhost:8090", kubernetesClient.getMasterUrl().toString());
 		assertEquals("testing", kubernetesClient.getNamespace());
 		assertEquals("http://localhost:8090", kubernetesClient.getConfiguration().getMasterUrl());
 		assertEquals(Boolean.TRUE, kubernetesClient.getConfiguration().isTrustCerts());
 	}
 
-	@Configuration
-	@EnableConfigurationProperties(KubernetesDeployerProperties.class)
-	@AutoConfigureOrder(Ordered.HIGHEST_PRECEDENCE)
-	public static class TestConfig {
+	@Test
+	public void testTopLevelNamespacing() {
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.getFabric8().setTrustCerts(true);
+		kubernetesDeployerProperties.getFabric8().setMasterUrl("http://localhost:8090");
+		kubernetesDeployerProperties.setNamespace("toplevel");
 
-		@Autowired
-		private KubernetesDeployerProperties properties;
+		KubernetesClient kubernetesClient = KubernetesClientFactory
+				.getKubernetesClient(kubernetesDeployerProperties);
 
-		@Bean
-		public KubernetesClient kubernetesClient() {
-			return KubernetesClientFactory.getKubernetesClient(this.properties);
-		}
+		assertEquals("http://localhost:8090", kubernetesClient.getMasterUrl().toString());
+		assertEquals("toplevel", kubernetesClient.getNamespace());
+		assertEquals("http://localhost:8090", kubernetesClient.getConfiguration().getMasterUrl());
+		assertEquals(Boolean.TRUE, kubernetesClient.getConfiguration().isTrustCerts());
+	}
+
+	@Test
+	public void testTopLevelNamespacingOverride() {
+		KubernetesDeployerProperties kubernetesDeployerProperties = new KubernetesDeployerProperties();
+		kubernetesDeployerProperties.getFabric8().setTrustCerts(true);
+		kubernetesDeployerProperties.getFabric8().setMasterUrl("http://localhost:8090");
+		kubernetesDeployerProperties.getFabric8().setNamespace("toplevel");
+		kubernetesDeployerProperties.setNamespace("toplevel");
+
+		KubernetesClient kubernetesClient = KubernetesClientFactory
+				.getKubernetesClient(kubernetesDeployerProperties);
+
+		assertEquals("http://localhost:8090", kubernetesClient.getMasterUrl().toString());
+		assertEquals("toplevel", kubernetesClient.getNamespace());
+		assertEquals("http://localhost:8090", kubernetesClient.getConfiguration().getMasterUrl());
+		assertEquals(Boolean.TRUE, kubernetesClient.getConfiguration().isTrustCerts());
 	}
 }
