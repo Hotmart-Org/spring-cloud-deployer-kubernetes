@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.fabric8.kubernetes.api.model.HasMetadata;
@@ -217,7 +218,7 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 	protected String createDeploymentId(AppDeploymentRequest request) {
 		String name = request.getDefinition().getName();
 		Hashids hashids = new Hashids(name, 0, "abcdefghijklmnopqrstuvwxyz1234567890");
-		String hashid = hashids.encode(System.currentTimeMillis());
+		String hashid = hashids.encode(new Random().nextInt(Integer.MAX_VALUE));
 		String deploymentId = name + "-" + hashid;
 		// Kubernetes does not allow . in the name and does not allow uppercase in the name
 		return deploymentId.replace('.', '-').toLowerCase();
@@ -229,12 +230,15 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 		Map<String, String> podLabelMap = new HashMap<>();
 		podLabelMap.put("task-name", request.getDefinition().getName());
 		podLabelMap.put(SPRING_MARKER_KEY, SPRING_MARKER_VALUE);
+		podLabelMap.put("app.kubernetes.io/instance", request.getDeploymentProperties().get("facility"));
+		podLabelMap.put("app.kubernetes.io/name", "application");
 
 		Map<String, String> deploymentProperties = request.getDeploymentProperties();
 		Map<String, String> deploymentLabels = this.deploymentPropertiesResolver.getDeploymentLabels(deploymentProperties);
 		if (!CollectionUtils.isEmpty(deploymentLabels)) {
 			logger.debug(String.format("Adding deploymentLabels: %s", deploymentLabels));
 		}
+		
 		PodSpec podSpec = createPodSpec(request);
 
 		podSpec.setRestartPolicy(getRestartPolicy(request).name());
