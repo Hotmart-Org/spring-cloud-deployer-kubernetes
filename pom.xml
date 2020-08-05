@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<artifactId>spring-cloud-deployer-kubernetes</artifactId>
-	<version>2.3.2.RELEASE-HOTMART</version>
+	<version>2.3.2.RELEASE-HOTMART-1</version>
 	<groupId>org.springframework.cloud</groupId>
 	<packaging>jar</packaging>
 
@@ -75,6 +75,11 @@
 			<artifactId>hashids</artifactId>
 			<version>1.0.1</version>
 		</dependency>
+		<dependency>
+		  <groupId>com.google.guava</groupId>
+		  <artifactId>guava</artifactId>
+		  <version>28.2-jre</version>
+		</dependency>		
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-configuration-processor</artifactId>
