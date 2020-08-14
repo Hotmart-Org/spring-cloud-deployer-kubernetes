@@ -26,22 +26,25 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.fabric8.kubernetes.api.model.Container;
-import io.fabric8.kubernetes.api.model.ContainerBuilder;
-import io.fabric8.kubernetes.api.model.EnvVar;
-import io.fabric8.kubernetes.api.model.EnvVarSource;
-import io.fabric8.kubernetes.api.model.ObjectFieldSelector;
-import io.fabric8.kubernetes.api.model.Probe;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.scheduler.ScheduleRequest;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.fabric8.kubernetes.api.model.Container;
+import io.fabric8.kubernetes.api.model.ContainerBuilder;
+import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.EnvVarSource;
+import io.fabric8.kubernetes.api.model.EnvVarSourceBuilder;
+import io.fabric8.kubernetes.api.model.ObjectFieldSelector;
+import io.fabric8.kubernetes.api.model.ObjectFieldSelectorBuilder;
+import io.fabric8.kubernetes.api.model.Probe;
 
 /**
  * Create a Kubernetes {@link Container} that will be started as part of a
@@ -138,6 +141,13 @@ public class DefaultContainerFactory implements ContainerFactory {
 		List<EnvVar> envVars = new ArrayList<>();
 		for (Map.Entry<String, String> e : envVarsMap.entrySet()) {
 			envVars.add(new EnvVar(e.getKey(), e.getValue(), null));
+		}
+		
+		String addPodIP = deploymentProperties.get("spring.cloud.deployer.kubernetes.add-pod-ip");
+		if(addPodIP != null) {
+			envVars.add(new EnvVar(addPodIP, null, new EnvVarSourceBuilder()
+				.withFieldRef(new ObjectFieldSelectorBuilder().withFieldPath("status.podIP").build())
+			.build()));
 		}
 
 		envVars.addAll(deploymentPropertiesResolver.getSecretKeyRefs(deploymentProperties));
