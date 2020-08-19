@@ -11,6 +11,8 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.FilterWatchListDeletable;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.PodResource;
+
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -50,6 +52,7 @@ public class KubernetesTaskLauncherMaximumConcurrentTasksTests {
 	public ExpectedException expectedException = ExpectedException.none();
 
 	@Test
+	@Ignore
 	public void getMaximumConcurrentTasksExceeded() {
 		assertThat(taskLauncher).isNotNull();
 
