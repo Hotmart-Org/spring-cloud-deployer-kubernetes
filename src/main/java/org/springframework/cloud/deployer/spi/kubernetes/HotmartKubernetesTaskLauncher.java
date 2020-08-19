@@ -122,6 +122,7 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 			Config config = new ConfigBuilder()
 					.withMasterUrl(kubernetesConfig.getMasterUrl())
 					.withOauthToken(kubernetesConfig.getOauthToken())
+					.withWebsocketPingInterval(30000)
 					.build();
 
 			@SuppressWarnings("resource")
