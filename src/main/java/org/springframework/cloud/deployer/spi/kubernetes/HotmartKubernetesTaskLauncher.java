@@ -43,12 +43,15 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 	private ContainerFactory containerFactory;
 	private KubernetesDeployerProperties properties;
 	private KubernetesConfigProvider kubernetesConfigProvider;
+	private final Cache<String, KubernetesTaskLauncher> cache;
 
 	public HotmartKubernetesTaskLauncher(
 			ContainerFactory containerFactory, KubernetesDeployerProperties properties, KubernetesConfigProvider kubernetesConfigProvider) {
 		this.containerFactory = containerFactory;
 		this.properties = properties;
 		this.kubernetesConfigProvider = kubernetesConfigProvider;
+		
+		this.cache = CacheBuilder.newBuilder().build();
 	}
 
 	@Override
@@ -72,6 +75,7 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 		
 		AppDeploymentRequest requestClone = new AppDeploymentRequest(request.getDefinition(), request.getResource(), deploymentProperties, request.getCommandlineArguments());
 		
+		logger.info("Launching deployment request");
 		return taskLauncher.launch(requestClone);
 	}
 
@@ -105,8 +109,6 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 		
 		logger.info("Using config " + kubernetesConfig.getMasterUrl());
 
-		Cache<String, KubernetesTaskLauncher> cache = CacheBuilder.newBuilder().build();
-		
 		try {
 			return cache.get(kubernetesConfig.getMasterUrl(), loader(kubernetesConfig));
 		} catch (ExecutionException e) {
@@ -116,9 +118,11 @@ public class HotmartKubernetesTaskLauncher implements TaskLauncher {
 
 	private Callable<KubernetesTaskLauncher> loader(KubernetesConfig kubernetesConfig) {
 		return () -> {
+			logger.info("Loading config " + kubernetesConfig.getMasterUrl());
 			Config config = new ConfigBuilder()
 					.withMasterUrl(kubernetesConfig.getMasterUrl())
 					.withOauthToken(kubernetesConfig.getOauthToken())
+					.withWebsocketPingInterval(30000)
 					.build();
 
 			@SuppressWarnings("resource")
