@@ -212,7 +212,11 @@ public class KubernetesTaskLauncher extends AbstractKubernetesDeployer implement
 	}
 
 	private boolean maxConcurrentExecutionsReached() {
-		return this.getRunningTaskExecutionCount() >= this.getMaximumConcurrentTasks();
+//		return this.getRunningTaskExecutionCount() >= this.getMaximumConcurrentTasks();
+		//HOTMART: removing this due to performance issues
+		//please leave this comment as a reminder
+
+		return false;
 	}
 
 	protected String createDeploymentId(AppDeploymentRequest request) {
